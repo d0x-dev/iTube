@@ -1,3 +1,5 @@
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/0623281b-ac28-4f80-8749-694c0eba0358" />
+
 # iTube
 An advanced, elegant YouTube and Music streaming application for Android.
 
