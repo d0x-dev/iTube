@@ -1,3 +1,5 @@
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/b7b1c6ba-3f3d-4e56-bb44-099b6ff319de" />
+
 # iTube
 
 An open-source Android app for watching YouTube videos and Shorts, and listening to music. iTube combines video discovery, a full-featured player, and iMusic in one native Android experience.
@@ -24,7 +26,7 @@ An open-source Android app for watching YouTube videos and Shorts, and listening
 Open [GitHub Releases](https://github.com/d0x-dev/iTube/releases) and download the APK attached to the release you want. Release APKs use this filename format:
 
 ```text
-iTube_v<TAG>_signed.apk
+iTube_v{TAG}_signed.apk
 ```
 
 For example, the APK for tag `2.0.0` is `iTube_v2.0.0_signed.apk`.
