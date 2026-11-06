@@ -1,5 +1,3 @@
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/0623281b-ac28-4f80-8749-694c0eba0358" />
-
 # iTube
 
 An open-source Android app for watching YouTube videos and Shorts, and listening to music. iTube combines video discovery, a full-featured player, and iMusic in one native Android experience.
@@ -8,6 +6,7 @@ An open-source Android app for watching YouTube videos and Shorts, and listening
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 ## Preview
+
 ![iTube player preview](https://github.com/user-attachments/assets/eefb57f5-8384-4aa0-8bf2-a47e41231c12)
 
 ## Features
