@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun MusicScreen(
     contentPadding: PaddingValues,
-    onOpenMusic: (MusicTrack, List<MusicTrack>) -> Unit,
+    onOpenMusic: (MusicTrack, List<MusicTrack>?) -> Unit,
     onSearch: () -> Unit,
     onAccount: () -> Unit,
     scrollToTop: Int = 0,
@@ -217,7 +217,7 @@ fun MusicScreen(
                                             QuickPickRow(
                                                 track = track,
                                                 onClick = {
-                                                    onOpenMusic(track, currentFeed.quickPicks)
+                                                    onOpenMusic(track, null)
                                                 }
                                             )
                                         }
@@ -233,7 +233,7 @@ fun MusicScreen(
                     MusicSectionCarousel(
                         section = section,
                         onTrackClick = { track ->
-                            onOpenMusic(track, section.items)
+                            onOpenMusic(track, null)
                         }
                     )
                 }

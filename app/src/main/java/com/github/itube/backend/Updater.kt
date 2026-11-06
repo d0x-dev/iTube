@@ -71,35 +71,19 @@ import java.security.MessageDigest
 import java.util.Locale
 
 /**
- * Self-update from d0x-dev/AirStream releases. Once a day the newest release's versioned APK is
- * looked up; when it's newer than this build, Home shows an Update button next to the profile
- * picture. Tapping it downloads the APK (checked against GitHub's size and sha256) and hands it to
- * PackageInstaller. The first update asks the user (and Android may first ask to allow installs from
- * AirStream); after that AirStream is its own installer and Android 12+ updates it without a prompt, then a
- * notification says it's done. Nothing newer = nothing shown. On Wi-Fi the APK is fetched ahead, so
- * the tap goes straight to installing. Logs "update check: …" / "update: …".
+ * Looks for newer d0x-dev/iTube GitHub releases on each cold app launch. A newer release opens the
+ * What's New sheet automatically, and its Download button opens that release's signed APK URL.
  *
  * What's new (issue #30): the button opens a sheet with the notes of every release newer than this
  * build (scripts/publish-apk.sh posts each version's CHANGELOG.md section as its release notes), and
  * the sheet's own Update button installs.
  */
 object AppUpdate {
-    private const val TAG = "AirStream"
+    private const val TAG = "iTubeUpdate"
     /** Newest first; enough to cover the notes of every release a phone may have skipped. */
     private const val RELEASES_URL = "https://api.github.com/repos/d0x-dev/iTube/releases?per_page=30"
-    /** Android's PackageInstaller session name is internal; upstream's uploaded APK is versioned. */
     private const val APK_ASSET = "iTube.apk"
-    private const val CHECK_EVERY_MS = 24 * 60 * 60 * 1000L
-    /** A check that failed (offline, rate limit) tries again after this, not a day later. */
-    private const val RETRY_AFTER_MS = 60 * 60 * 1000L
-    private const val KEY_NEXT_CHECK = "next_check"
     private const val KEY_RELEASE = "release"
-    /**
-     * The version that made the last check. A different one (just installed from GitHub, Drive or
-     * adb) checks at once: installing over the app keeps the daily timer, and an install from
-     * Drive showed no Update button until the next day (2026-10-29).
-     */
-    private const val KEY_CHECKED_BY = "checked_by"
     /** The version an install was started for: the next start of that version posts "updated". */
     private const val KEY_INSTALLING = "installing"
     /** The install asked the user; Android's own dialog then offers Open, so no notification. */
@@ -131,6 +115,11 @@ object AppUpdate {
         private set
     var phase by mutableStateOf(Phase.Ready)
         private set
+    /** Exposed to Settings so a manual check has clear feedback. */
+    var checkingNow by mutableStateOf(false)
+        private set
+    var lastCheckMessage by mutableStateOf<String?>(null)
+        private set
     /** Download progress 0…1 (written from the download thread). */
     var progress by mutableFloatStateOf(0f)
         private set
@@ -141,6 +130,8 @@ object AppUpdate {
     private lateinit var prefs: SharedPreferences
     private val scope = MainScope()
     private var checking = false
+    /** Prevent repeat network requests when the same activity resumes during this app launch. */
+    private var checkedThisProcess = false
     private var download: Deferred<File?>? = null
     private var downloadVersion: String? = null
     /** Sent to "Install unknown apps"; the install carries on when the window comes back. */
@@ -156,22 +147,35 @@ object AppUpdate {
         dir().listFiles()?.forEach { if (it.name != keep) it.delete() }
     }
 
-    /** Called whenever a window comes to the front; looks GitHub up at most once a day, and on a new version's first start. */
+    /** Called when the app enters foreground; check once per process start. */
     fun checkIfDue() {
-        val newInstall = prefs.getString(KEY_CHECKED_BY, null) != BuildConfig.VERSION_NAME
-        if (checking || (!newInstall && System.currentTimeMillis() < prefs.getLong(KEY_NEXT_CHECK, 0L))) return
+        if (checking || checkedThisProcess) return
+        checkedThisProcess = true
+        check(force = false)
+    }
+
+    /** Checks GitHub immediately from Settings, regardless of the daily launch check. */
+    fun checkNow() {
+        if (checking) return
+        check(force = true)
+    }
+
+    private fun check(force: Boolean) {
+        if (checking) return
         checking = true
+        checkingNow = true
+        if (force) lastCheckMessage = null
         scope.launch {
             val result = runCatching { withContext(Dispatchers.IO) { fetchLatest() } }
             checking = false
-            val now = System.currentTimeMillis()
+            checkingNow = false
             result.onFailure {
-                Log.w(TAG, "update check failed (${it.message}); trying again in an hour")
-                prefs.edit().putLong(KEY_NEXT_CHECK, now + RETRY_AFTER_MS).putString(KEY_CHECKED_BY, BuildConfig.VERSION_NAME).apply()
+                Log.w(TAG, "update check failed (${it.message})")
+                lastCheckMessage = "Couldn't check for updates. Check your connection and try again."
                 return@launch
             }
             val latest = result.getOrNull()
-            prefs.edit().putLong(KEY_NEXT_CHECK, now + CHECK_EVERY_MS).putString(KEY_CHECKED_BY, BuildConfig.VERSION_NAME)
+            prefs.edit()
                 .apply { if (latest != null) putString(KEY_RELEASE, latest.toJson()) else remove(KEY_RELEASE) }
                 .apply()
             val newer = latest?.takeIf { isNewer(it.version) }
@@ -179,8 +183,17 @@ object AppUpdate {
                 if (newer != null) " → update available" else "")
             if (phase == Phase.Downloading || phase == Phase.Installing) return@launch
             if (newer != available) { available = newer; phase = Phase.Ready }
-            if (newer != null && !metered()) apkFor(newer)
+            lastCheckMessage = if (newer == null) "iTube is up to date." else "iTube ${newer.version} is available."
         }
+    }
+
+    /** Opens the versioned APK directly from the GitHub release. */
+    fun openDownload(context: Context) {
+        val release = available ?: return
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(release.apkUrl))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+            .onFailure { Log.w(TAG, "update: couldn't open APK link", it) }
     }
 
     /** The What's new sheet's Update button. */
@@ -254,7 +267,7 @@ object AppUpdate {
         val open = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("AirStream updated to ${BuildConfig.VERSION_NAME}")
+            .setContentTitle("iTube updated to ${BuildConfig.VERSION_NAME}")
             .setContentText("Tap to open")
             .setContentIntent(PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE))
             .setAutoCancel(true)
@@ -267,7 +280,7 @@ object AppUpdate {
     private fun fetchLatest(): Release? {
         val request = Request.Builder().url(RELEASES_URL)
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "AirStream/${BuildConfig.VERSION_NAME}")
+            .header("User-Agent", "iTube/${BuildConfig.VERSION_NAME}")
             .build()
         Net.client.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "HTTP ${response.code}" }
@@ -292,17 +305,19 @@ object AppUpdate {
         return latest.copy(notes = notes)
     }
 
-    /** The latest-release JSON → its version-matched AirStream APK, or null when it has none. */
+    /** Latest release JSON → matching APK asset, or the documented direct URL if the APK is still uploading. */
     internal fun parseRelease(json: JSONObject): Release? {
-        val version = json.optString("tag_name").removePrefix("v").ifBlank { return null }
-        val assets = json.optJSONArray("assets") ?: return null
+        val tag = json.optString("tag_name").ifBlank { return null }
+        val version = tag.removePrefix("v")
+        val assets = json.optJSONArray("assets") ?: JSONArray()
         val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == releaseAssetName(version) } ?: return null
+            .firstOrNull { it.optString("name") == releaseAssetName(version) }
+        val directUrl = "https://github.com/d0x-dev/iTube/releases/download/${Uri.encode(tag)}/${Uri.encode(releaseAssetName(version))}"
         return Release(
             version = version,
-            apkUrl = apk.optString("browser_download_url").ifBlank { return null },
-            size = apk.optLong("size"),
-            sha256 = apk.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
+            apkUrl = apk?.optString("browser_download_url")?.ifBlank { null } ?: directUrl,
+            size = apk?.optLong("size") ?: 0L,
+            sha256 = apk?.optString("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
             notes = listOf(ReleaseNotes(version, json.optString("body"))).filter { it.sections.isNotEmpty() },
         )
     }
@@ -374,7 +389,7 @@ object AppUpdate {
         }
         progress = 0f
         val part = File(dir(), file.name + ".part")
-        val request = Request.Builder().url(release.apkUrl).header("User-Agent", "AirStream/${BuildConfig.VERSION_NAME}").build()
+        val request = Request.Builder().url(release.apkUrl).header("User-Agent", "iTube/${BuildConfig.VERSION_NAME}").build()
         Net.client.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "HTTP ${response.code}" }
             val body = checkNotNull(response.body) { "no body" }
@@ -532,7 +547,7 @@ fun UpdateAction() {
             )
         }
     }
-    if (sheet) WhatsNewSheet(release, onDismiss = { sheet = false })
+    if (sheet) UpdateNotesSheet(release, onDismiss = { sheet = false })
 }
 
 /**
@@ -543,7 +558,7 @@ fun UpdateAction() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WhatsNewSheet(release: AppUpdate.Release, onDismiss: () -> Unit) {
+fun UpdateNotesSheet(release: AppUpdate.Release, onDismiss: () -> Unit) {
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
     val phase = AppUpdate.phase
@@ -558,7 +573,7 @@ private fun WhatsNewSheet(release: AppUpdate.Release, onDismiss: () -> Unit) {
             modifier = Modifier.padding(horizontal = 24.dp),
         )
         Text(
-            listOfNotNull("AirStream ${release.version}", release.size.takeIf { it > 0 }?.let { "%.1f MB".format(Locale.US, it / 1_048_576.0) }).joinDots(),
+            listOfNotNull("iTube ${release.version}", release.size.takeIf { it > 0 }?.let { "%.1f MB".format(Locale.US, it / 1_048_576.0) }).joinDots(),
             color = c.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 14.dp),
         )
@@ -584,24 +599,16 @@ private fun WhatsNewSheet(release: AppUpdate.Release, onDismiss: () -> Unit) {
             modifier = Modifier
                 .padding(horizontal = 24.dp)
                 .fillMaxWidth()
-                .pressable(enabled = phase == AppUpdate.Phase.Ready || phase == AppUpdate.Phase.Failed) { AppUpdate.install(context) }
+            .pressable { AppUpdate.openDownload(context) }
                 .height(54.dp)
                 .clip(CircleShape)
                 .background(c.primary)
                 .drawBehind {
-                    if (phase == AppUpdate.Phase.Downloading) {
-                        drawRect(c.onPrimary.copy(alpha = 0.22f), size = Size(size.width * AppUpdate.progress, size.height))
-                    }
                 },
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                when (phase) {
-                    AppUpdate.Phase.Ready -> "Update"
-                    AppUpdate.Phase.Downloading -> "Downloading ${(AppUpdate.progress * 100).toInt()}%"
-                    AppUpdate.Phase.Installing -> "Installing…"
-                    AppUpdate.Phase.Failed -> "Try again"
-                },
+                "Download APK",
                 color = c.onPrimary,
                 fontFamily = RoundedHeavy,
                 fontWeight = FontWeight.ExtraBold,

@@ -24,6 +24,7 @@ class AirStreamApplication : Application(), ImageLoaderFactory {
         CaptionSettings.init(this)
         CaptionTranslator.refresh()
         SearchHistory.init(this)
+        ListeningProfile.init(this)
         ResumeStore.init(this)
         SavedSession.init(this)
         Account.init(this)

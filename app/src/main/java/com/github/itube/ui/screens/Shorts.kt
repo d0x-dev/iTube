@@ -420,6 +420,32 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
         loop = scope.launch { while (isActive) { tick(); delay(TickMs) } }
     }
 
+    /** Loads a real Shorts feed for the Home shelf without starting a Shorts player. */
+    fun ensureFeed() {
+        if (items.isEmpty() && !loading) refresh()
+    }
+
+    /** Selects the tapped Home-shelf Short before the Shorts tab becomes visible. */
+    fun openFromHome(videoId: String) {
+        val target = items.indexOfFirst { it.id == videoId }
+        if (target >= 0 && target != index) {
+            index = target
+            userPaused = false
+            progress = 0f
+            feedVersion++
+        }
+    }
+
+    /** Puts a Short opened from a channel at the front of the Shorts pager. */
+    fun openExternal(item: VideoItem) {
+        pageJob?.cancel()
+        items = listOf(item) + items.filter { it.id != item.id }
+        index = 0
+        userPaused = false
+        progress = 0f
+        feedVersion++
+    }
+
     /**
      * The tab closed: everything stops at once; the feed and the spot stay. The players go after
      * the bar has turned back into tabs, one a frame: releasing an ExoPlayer blocks until its

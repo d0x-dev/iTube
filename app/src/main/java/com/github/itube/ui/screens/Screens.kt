@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.WatchLater
@@ -113,8 +114,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 @Composable
 fun HomeScreen(
     lib: LibraryData,
+    shorts: ShortsState,
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
+    onOpenShort: (VideoItem) -> Unit,
     onSearch: () -> Unit,
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
@@ -122,12 +125,24 @@ fun HomeScreen(
 ) {
     val signedIn = Account.signedIn
     LaunchedEffect(signedIn) { if (signedIn) lib.home.ensureLoaded() }
+    LaunchedEffect(Unit) { shorts.ensureFeed() }
     CollapsingHeaderLayout(
         resetKey = scrollToTop to lib.home.generation,
         header = { ScreenHeader(title = "iTube", brandMark = true) { UpdateAction(); AccountAction(onAccount) } },
     ) { top ->
         if (signedIn) {
-            FeedList(lib.home, contentPadding.withTop(top), onOpen, scrollToTop = scrollToTop, indicatorTop = top)
+            FeedList(
+                lib.home,
+                contentPadding.withTop(top),
+                onOpen,
+                afterFirstVideo = {
+                    item(key = "homeShorts") {
+                        HomeShortsShelf(shorts.items, onOpenShort)
+                    }
+                },
+                scrollToTop = scrollToTop,
+                indicatorTop = top,
+            )
         } else {
             LazyColumn(contentPadding = contentPadding.withTop(top)) {
                 item {
@@ -142,6 +157,52 @@ fun HomeScreen(
                                 TextLink("Search instead", onSearch)
                             }
                         },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A compact real Shorts rail, sourced from the same InnerTube feed as the Shorts tab. */
+@Composable
+private fun HomeShortsShelf(shorts: List<VideoItem>, onOpenShort: (VideoItem) -> Unit) {
+    if (shorts.isEmpty()) return
+    Column(Modifier.padding(top = 4.dp, bottom = 6.dp)) {
+        Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+            Text("i", color = Color(0xFFFF0000), fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+            Text("Shorts", fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+        }
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(shorts.take(14), key = { "home-short-" + it.id }) { short ->
+                Column(
+                    Modifier
+                        .width(118.dp)
+                        .clickable { onOpenShort(short) },
+                ) {
+                    Box {
+                        Thumbnail(
+                            short.thumbnail,
+                            Modifier.fillMaxWidth().aspectRatio(9f / 15f),
+                            radius = 16,
+                        )
+                        DurationPill(
+                            short.durationSec,
+                            Modifier.align(Alignment.BottomEnd).padding(5.dp),
+                            small = true,
+                        )
+                    }
+                    Text(
+                        short.title,
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
                     )
                 }
             }
@@ -662,7 +723,9 @@ fun SearchScreen(
     ) { top ->
         Box(Modifier.fillMaxSize()) {
             if (state.category == SearchCategory.Videos) {
-                val listShown = showHistory || (state.results.isNotEmpty() && state.error == null)
+                // Suggestions are already a scrolling list with the header inset. Including
+                // them here avoids adding that inset a second time (which left a huge blank gap).
+                val listShown = showSuggestions || showHistory || (state.results.isNotEmpty() && state.error == null)
                 Box(Modifier.padding(top = if (listShown) 0.dp else top)) {
                     when {
                         showSuggestions -> SearchSuggestionsList(
@@ -742,7 +805,7 @@ fun SearchScreen(
                                     MusicSearchTrackRow(
                                         track = track,
                                         onClick = {
-                                            MusicPlayerState.play(track, state.musicResults)
+                                            MusicPlayerState.play(track, null)
                                         }
                                     )
                                 }
@@ -804,17 +867,141 @@ private fun SearchResultCard(result: SearchResult, onOpen: (VideoItem) -> Unit, 
         return
     }
     val c = MaterialTheme.colorScheme
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
-            .clip(RoundedCornerShape(20.dp)).background(c.surfaceContainerLow).pressable { onOpenResult(result) }.padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Thumbnail(result.thumbnail, Modifier.size(68.dp), radius = 16)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(result.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(3.dp))
-            Text(result.subtitle, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    when (result.kind) {
+        SearchResultKind.Channel -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(c.surfaceContainerLow)
+                    .pressable { onOpenResult(result) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                ) {
+                    Thumbnail(result.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = result.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = c.onSurface,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = result.subtitle.ifBlank { "Channel" },
+                        color = c.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.primaryContainer)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "View",
+                        color = c.onPrimaryContainer,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+        SearchResultKind.Collection -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(c.surfaceContainerLow)
+                    .pressable { onOpenResult(result) }
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                ) {
+                    Thumbnail(result.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.Black.copy(alpha = 0.75f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = if (result.isAlbum) "ALBUM" else "PLAYLIST",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = result.title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = c.onSurface,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = result.subtitle.ifBlank { if (result.isAlbum) "Album" else "Playlist" },
+                        color = c.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Rounded.ArrowForward,
+                    contentDescription = null,
+                    tint = c.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        else -> {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(c.surfaceContainerLow)
+                    .pressable { onOpenResult(result) }
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Thumbnail(result.thumbnail, Modifier.size(68.dp), radius = 16)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(result.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(3.dp))
+                    Text(result.subtitle, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
     }
 }

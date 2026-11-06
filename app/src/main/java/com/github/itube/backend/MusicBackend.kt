@@ -29,21 +29,41 @@ object MusicBackend {
         val quickPicks = mutableListOf<MusicTrack>()
         val sections = mutableListOf<MusicSection>()
 
-        // 1. Fetch Explore (Trending, New releases)
-        try {
-            val exploreJson = postInnerTube("FEmusic_explore")
-            parseShelves(exploreJson, sections, quickPicks)
-        } catch (e: Exception) {
-            Log.w(TAG, "Error fetching FEmusic_explore: ${e.message}")
+        // Taste/mood shelves are real search responses, not fixed sample songs. They are put
+        // first so the home changes with what this device has been listening to.
+        val personalQuery = chipFilter?.let { "$it music" } ?: ListeningProfile.seed()
+        var hasPersonalResults = false
+        if (!personalQuery.isNullOrBlank()) {
+            runCatching { searchMusic(personalQuery) }.getOrDefault(emptyList()).takeIf { it.isNotEmpty() }?.let { tracks ->
+                hasPersonalResults = true
+                sections += MusicSection(
+                    title = if (chipFilter != null) "$chipFilter mix" else "Made for you",
+                    label = if (chipFilter != null) "MOOD & GENRE" else "FROM YOUR LISTENING",
+                    thumbnail = tracks.firstOrNull()?.thumbnailUrl,
+                    items = tracks,
+                )
+                quickPicks += tracks.take(12)
+            }
         }
 
-        // 2. Fetch Home (Personalized / Curated shelves & chips)
-        try {
-            val homeJson = postInnerTube("FEmusic_home")
-            parseChips(homeJson, chips)
-            parseShelves(homeJson, sections, quickPicks)
-        } catch (e: Exception) {
-            Log.w(TAG, "Error fetching FEmusic_home: ${e.message}")
+        // The generic Music home is only a first-run/network fallback. Once this device has
+        // listening data (or the listener selected a mood), do not append the same static
+        // shelves after the personal mix.
+        if (!hasPersonalResults) {
+            try {
+                val exploreJson = postInnerTube("FEmusic_explore")
+                parseShelves(exploreJson, sections, quickPicks)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching FEmusic_explore: ${e.message}")
+            }
+
+            try {
+                val homeJson = postInnerTube("FEmusic_home")
+                parseChips(homeJson, chips)
+                parseShelves(homeJson, sections, quickPicks)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching FEmusic_home: ${e.message}")
+            }
         }
 
         // Default chips if none parsed
@@ -68,6 +88,14 @@ object MusicBackend {
             quickPicks = finalQuickPicks,
             sections = finalSections
         )
+    }
+
+    /** Builds a radio queue from the current song's artist/title, excluding the playing song. */
+    suspend fun relatedTracks(track: MusicTrack): List<MusicTrack> = withContext(Dispatchers.IO) {
+        searchMusic("${track.artists} ${track.title}")
+            .filter { it.id != track.id }
+            .distinctBy { it.id }
+            .take(24)
     }
 
     private fun postInnerTube(browseId: String, params: String? = null): JSONObject {

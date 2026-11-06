@@ -184,6 +184,8 @@ fun FeedList(
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
     header: LazyListScope.() -> Unit = {},
+    /** Optional content placed after the first normal video, never above it. */
+    afterFirstVideo: (LazyListScope.() -> Unit)? = null,
     scrollToTop: Int = 0,
     pullToRefresh: Boolean = true,
     /** Collapsing header height: the refresh spinner appears just below it. */
@@ -203,7 +205,15 @@ fun FeedList(
     PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = feed::refresh, topPadding = indicatorTop) {
     LazyColumn(state = list, contentPadding = contentPadding) {
         header()
-        items(feed.videos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+        if (afterFirstVideo == null) {
+            items(feed.videos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+        } else {
+            feed.videos.firstOrNull()?.let { first ->
+                item(key = first.id) { VideoCard(first, onClick = { onOpen(first) }) }
+            }
+            afterFirstVideo()
+            items(feed.videos.drop(1), key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+        }
         when {
             // No keys on these trailing items: a keyed loader at index 0 makes LazyColumn
             // hold it in view when videos arrive above it, landing at the bottom of the page.

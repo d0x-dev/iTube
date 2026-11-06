@@ -6,10 +6,13 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,12 +25,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.SystemUpdateAlt
+import androidx.compose.material.icons.rounded.Refresh
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
@@ -40,13 +46,22 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -265,19 +280,285 @@ private fun SettingsDetailContent(detail: SettingsDetail, onBack: () -> Unit) {
                 SettingsDetail.Player -> PlayerControlsSettings()
                 SettingsDetail.Shorts -> ShortsSettings()
                 SettingsDetail.PopupEffects -> BlurSettings()
-                SettingsDetail.About -> {
-                    BrandMark()
-                    Spacer(Modifier.height(12.dp))
-                    Text("iTube", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
-                    Text("Version 1.0.0", color = c.onSurfaceVariant, fontSize = 14.sp)
-                    Spacer(Modifier.height(22.dp))
-                    Text("Developers", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("d0x-dev", color = c.onSurfaceVariant, fontSize = 15.sp)
-                    Spacer(Modifier.height(18.dp))
-                    Text("Updates", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("Checks releases from github.com/d0x-dev/iTube.", color = c.onSurfaceVariant, fontSize = 14.sp)
-                }
+                SettingsDetail.About -> AboutITubeV2()
             }
+        }
+    }
+}
+
+@Composable
+private fun AboutITube() {
+    val c = MaterialTheme.colorScheme
+    val uri = LocalUriHandler.current
+    val release = AppUpdate.available
+    val checking = AppUpdate.checkingNow
+    var showNotes by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        androidx.compose.foundation.Image(
+            painter = painterResource(if (c.surface.luminance() < 0.5f) R.drawable.itube_dark else R.drawable.itube),
+            contentDescription = "iTube",
+            modifier = Modifier.size(88.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("i", color = c.primary, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 29.sp)
+            Text("Tube", color = c.onSurface, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 29.sp)
+        }
+        Text("Version ${BuildConfig.VERSION_NAME}", color = c.onSurfaceVariant, fontSize = 14.sp)
+        Text("Open-source video and music", color = c.onSurfaceVariant, fontSize = 13.sp)
+
+        Spacer(Modifier.height(28.dp))
+        Text("Developers", modifier = Modifier.fillMaxWidth(), fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+        Spacer(Modifier.height(8.dp))
+        DeveloperCard(
+            name = "Darkboy",
+            role = "Lead Developer",
+            avatarUrl = "https://avatars.githubusercontent.com/u/218248866",
+            githubUrl = "https://github.com/d0x-dev",
+            profileLabel = "github.com/d0x-dev",
+            websiteUrl = "https://darkboy.pro",
+            websiteLabel = "darkboy.pro",
+            uri = uri,
+        )
+        Spacer(Modifier.height(10.dp))
+        DeveloperCard(
+            name = "V E N O M",
+            role = "UI/UX Specialist",
+            avatarUrl = "https://avatars.githubusercontent.com/u/241423835",
+            githubUrl = "https://github.com/drkvenom786",
+            profileLabel = "github.com/drkvenom786",
+            websiteUrl = "https://drkvenom786.github.io/webpage/",
+            websiteLabel = "drkvenom786.github.io",
+            uri = uri,
+        )
+
+        Spacer(Modifier.height(28.dp))
+        Text("Updates", modifier = Modifier.fillMaxWidth(), fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Checks the published releases from d0x-dev/iTube.",
+            color = c.onSurfaceVariant,
+            fontSize = 14.sp,
+        )
+        Spacer(Modifier.height(14.dp))
+        PillButton(
+            text = if (checking) "Checking…" else "Check for updates",
+            onClick = { if (!checking) AppUpdate.checkNow() },
+            icon = Icons.Rounded.SystemUpdateAlt,
+        )
+        if (checking) {
+            Spacer(Modifier.height(12.dp))
+            MaterialLoader(color = c.primary, size = 24.dp)
+        }
+        AppUpdate.lastCheckMessage?.let { message ->
+            Spacer(Modifier.height(12.dp))
+            Text(message, color = c.onSurfaceVariant, fontSize = 14.sp, textAlign = TextAlign.Center)
+        }
+        release?.let {
+            Spacer(Modifier.height(14.dp))
+            Text("Version ${it.version} is ready to install.", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Spacer(Modifier.height(10.dp))
+            PillButton("View release notes", { showNotes = true })
+        }
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "GitHub · d0x-dev/iTube",
+            color = c.primary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            modifier = Modifier.pressable { uri.openUri("https://github.com/d0x-dev/iTube") },
+        )
+    }
+    if (showNotes && release != null) {
+        UpdateNotesSheet(release, onDismiss = { showNotes = false })
+    }
+}
+
+@Composable
+private fun DeveloperCard(
+    name: String,
+    role: String,
+    avatarUrl: String,
+    githubUrl: String,
+    profileLabel: String,
+    websiteUrl: String,
+    websiteLabel: String,
+    uri: androidx.compose.ui.platform.UriHandler,
+) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(c.surfaceContainerHigh)
+            .border(1.dp, c.outlineVariant.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
+            .pressable { uri.openUri(githubUrl) }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ChannelAvatar(avatarUrl, name, size = 54)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+            Text(role, color = c.onSurfaceVariant, fontSize = 13.sp)
+            Text(profileLabel, color = c.primary, fontSize = 12.sp)
+            Text(websiteLabel, color = c.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.pressable { uri.openUri(websiteUrl) })
+        }
+        Icon(Icons.Rounded.AccountCircle, contentDescription = "Open GitHub profile", tint = c.primary)
+    }
+}
+
+/** AirBeats-style About layout, kept inside the app's single draggable settings sheet. */
+@Composable
+private fun AboutITubeV2() {
+    val c = MaterialTheme.colorScheme
+    val uri = LocalUriHandler.current
+    val release = AppUpdate.available
+    val checking = AppUpdate.checkingNow
+    var showNotes by remember { mutableStateOf(false) }
+    val spin = rememberInfiniteTransition(label = "updateCheck").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(850, easing = LinearEasing)),
+        label = "updateCheckSpin",
+    )
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(104.dp).clip(CircleShape).background(c.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+            androidx.compose.foundation.Image(
+                painter = painterResource(if (c.surface.luminance() < 0.5f) R.drawable.itube_dark else R.drawable.itube),
+                contentDescription = "iTube",
+                modifier = Modifier.size(80.dp),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("i", color = c.primary, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 32.sp)
+            Text("Tube", color = c.onSurface, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 32.sp)
+        }
+        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(7.dp)) {
+            AboutBadge(BuildConfig.VERSION_NAME)
+            AboutBadge(if (BuildConfig.DEBUG) "DEBUG" else "RELEASE")
+        }
+        Text("Dev By DxV STUDIO", color = c.onSurfaceVariant, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Spacer(Modifier.height(14.dp))
+        Row(
+            Modifier.clip(CircleShape).background(c.surfaceContainerHigh)
+                .border(1.dp, c.outlineVariant.copy(alpha = 0.55f), CircleShape)
+                .pressable { if (!checking) AppUpdate.checkNow() }
+                .padding(start = 15.dp, end = 17.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                if (checking) Icons.Rounded.Refresh else Icons.Rounded.SystemUpdateAlt,
+                contentDescription = null,
+                tint = c.primary,
+                modifier = Modifier.size(19.dp).graphicsLayer { rotationZ = if (checking) spin.value else 0f },
+            )
+            Text(
+                when {
+                    checking -> "Checking releases…"
+                    release != null -> "Update ${release.version} available"
+                    else -> "Check for updates"
+                },
+                fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp,
+            )
+        }
+        AppUpdate.lastCheckMessage?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp)) }
+        release?.let { Text("View release notes", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.pressable { showNotes = true }.padding(top = 9.dp)) }
+        Spacer(Modifier.height(18.dp))
+        AboutSocialHub(uri)
+        Spacer(Modifier.height(26.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Founders", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 23.sp)
+            Spacer(Modifier.width(9.dp))
+            Text("2 Founders", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+            FounderCardV2(
+                name = "Darkboy", role = "Lead Developer", avatarUrl = "https://avatars.githubusercontent.com/u/218248866",
+                githubUrl = "https://github.com/d0x-dev", profileLabel = "github.com/d0x-dev", website = "https://darkboy.pro", uri = uri,
+                modifier = Modifier.weight(1f),
+            )
+            FounderCardV2(
+                name = "V E N O M", role = "UI/UX Specialist", avatarUrl = "https://avatars.githubusercontent.com/u/241423835",
+                githubUrl = "https://github.com/drkvenom786", profileLabel = "github.com/drkvenom786", website = "https://drkvenom786.github.io/webpage/", uri = uri,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(Modifier.height(22.dp))
+        Text("GitHub · d0x-dev/iTube", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.pressable { uri.openUri("https://github.com/d0x-dev/iTube") })
+    }
+    if (showNotes && release != null) UpdateNotesSheet(release, onDismiss = { showNotes = false })
+}
+
+@Composable
+private fun AboutBadge(text: String) {
+    val c = MaterialTheme.colorScheme
+    Text(text.uppercase(), color = c.primary, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp,
+        modifier = Modifier.clip(CircleShape).border(1.dp, c.primary.copy(alpha = 0.8f), CircleShape).padding(horizontal = 10.dp, vertical = 4.dp))
+}
+
+@Composable
+private fun AboutSocialHub(uri: androidx.compose.ui.platform.UriHandler) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(c.surfaceContainerHigh)
+            .border(1.dp, c.outlineVariant.copy(alpha = 0.55f), RoundedCornerShape(28.dp)).padding(vertical = 10.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AboutSocialBubble("f", "https://www.facebook.com/venom.digital.creator", uri)
+        AboutSocialBubble("◎", "https://www.instagram.com/Dark__336/", uri)
+        AboutSocialBubble("GH", "https://github.com/d0x-dev", uri)
+        AboutSocialBubble("G", "https://g.dev/Darkboy336", uri)
+        AboutSocialBubble("↗", "https://darkboy.pro", uri)
+    }
+}
+
+@Composable
+private fun AboutSocialBubble(label: String, url: String, uri: androidx.compose.ui.platform.UriHandler) {
+    val c = MaterialTheme.colorScheme
+    Box(Modifier.size(38.dp).clip(CircleShape).border(1.dp, c.outline.copy(alpha = 0.55f), CircleShape).pressable { uri.openUri(url) }, contentAlignment = Alignment.Center) {
+        Text(label, color = c.primary, fontWeight = FontWeight.ExtraBold, fontSize = if (label == "GH") 11.sp else 19.sp)
+    }
+}
+
+@Composable
+private fun FounderCardV2(
+    name: String,
+    role: String,
+    avatarUrl: String,
+    githubUrl: String,
+    profileLabel: String,
+    website: String,
+    uri: androidx.compose.ui.platform.UriHandler,
+    modifier: Modifier = Modifier,
+) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        modifier.height(276.dp).clip(RoundedCornerShape(28.dp)).background(c.surfaceContainerHigh)
+            .border(1.dp, c.outlineVariant.copy(alpha = 0.65f), RoundedCornerShape(28.dp))
+            .pressable { uri.openUri(githubUrl) }.padding(vertical = 18.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        ChannelAvatar(avatarUrl, name, size = 86)
+        Spacer(Modifier.height(13.dp))
+        Text(name, maxLines = 1, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+        Spacer(Modifier.height(8.dp))
+        Text(role, maxLines = 1, color = c.onSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+            modifier = Modifier.clip(CircleShape).background(c.surfaceVariant).padding(horizontal = 9.dp, vertical = 5.dp))
+        Spacer(Modifier.weight(1f))
+        Text(profileLabel, color = c.onSurfaceVariant, maxLines = 1, fontSize = 10.sp)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            AboutSocialBubble("GH", githubUrl, uri)
+            AboutSocialBubble("↗", website, uri)
         }
     }
 }

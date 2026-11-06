@@ -199,6 +199,18 @@ fun AirStreamApp() {
     val lib = remember { LibraryData(scope) }
     var signingIn by remember { mutableStateOf(false) }
     var accountSheet by remember { mutableStateOf(false) }
+    // A release can arrive after the first composition because the launch check is asynchronous.
+    // Show its GitHub notes once per app launch, then keep the same sheet available in Settings.
+    var updateNotesShownFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var automaticUpdateNotes by remember { mutableStateOf(false) }
+    val availableUpdate = AppUpdate.available
+    LaunchedEffect(availableUpdate?.version) {
+        val version = availableUpdate?.version
+        if (version != null && updateNotesShownFor != version) {
+            updateNotesShownFor = version
+            automaticUpdateNotes = true
+        }
+    }
     var openPlaylist by remember { mutableStateOf<PlaylistRef?>(null) }
     var openChannel by remember { mutableStateOf<String?>(null) }
     var openPublicCollection by remember { mutableStateOf<PublicCollection?>(null) }
@@ -432,6 +444,7 @@ fun AirStreamApp() {
             LocalPictureInPicture provides pip,
             LocalVideoMenu provides { optionsFor = it },
             LocalChannelOpener provides { url -> showChannel(url) },
+            LocalCollectionOpener provides { collection -> showPublicCollection(collection) },
         ) {
         val popupBlurRadius by animateDpAsState(
             targetValue = if (BlurPopupState.isBlurActive) 22.dp else 0.dp,
@@ -455,7 +468,11 @@ fun AirStreamApp() {
         ) { t ->
             when (t) {
                 Tab.Home -> HomeScreen(
-                    lib, contentPadding, onOpen = player::open,
+                    lib, shorts, contentPadding, onOpen = player::open,
+                    onOpenShort = { short ->
+                        shorts.openFromHome(short.id)
+                        tab = Tab.Shorts
+                    },
                     onSearch = { search.selectCategory(SearchCategory.Videos); tab = Tab.Search },
                     onSignIn = { signingIn = true }, onAccount = { accountSheet = true },
                     scrollToTop = scrollToTop[Tab.Home] ?: 0,
@@ -519,6 +536,12 @@ fun AirStreamApp() {
                     ch, contentPadding, onBack = { openChannel = null },
                     // A video from a channel opened in Shorts plays in the app's player: Shorts closes.
                     onOpen = { v -> if (tab == Tab.Shorts) tab = shortsFrom; player.open(v) },
+                    onOpenShort = { short ->
+                        if (tab != Tab.Shorts) shortsFrom = tab
+                        shorts.openExternal(short)
+                        openChannel = null
+                        tab = Tab.Shorts
+                    },
                     onOpenCollection = ::showPublicCollection,
                     onMessage = { player.actionMessage = it },
                 )
@@ -532,7 +555,22 @@ fun AirStreamApp() {
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
             publicCollectionState?.let { collection ->
-                PublicCollectionScreen(collection, contentPadding, onBack = { openPublicCollection = null }, onOpen = player::open)
+                PublicCollectionScreen(
+                    state = collection,
+                    contentPadding = contentPadding,
+                    onBack = { openPublicCollection = null },
+                    onOpen = { v ->
+                        player.setAudioOnly(false)
+                        player.open(v)
+                    },
+                    onOpenPlaylist = { videos, index ->
+                        player.setAudioOnly(false)
+                        // The restored upstream video player owns a single current item.
+                        // Keep collection taps compatible without changing its playback code.
+                        videos.getOrNull(index)?.let(player::open)
+                    },
+                    onOpenChannel = ::showChannel,
+                )
             }
         }
 
@@ -835,6 +873,9 @@ fun AirStreamApp() {
                 onDone = { signingIn = false; lib.reset(); player.refreshAccountState() },
                 onCancel = { signingIn = false },
             )
+        }
+        if (automaticUpdateNotes && availableUpdate != null) {
+            UpdateNotesSheet(availableUpdate, onDismiss = { automaticUpdateNotes = false })
         }
 
         when (player.sheet) {

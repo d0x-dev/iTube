@@ -423,7 +423,7 @@ fun LyricsV2Screen(
                         onClick = { MusicPlayerState.togglePlayPause() },
                         modifier = Modifier.size(56.dp)
                     ) {
-                        if (isLoading) {
+                        if (isLoading && !isPlaying) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(36.dp),
                                 color = Color.White,

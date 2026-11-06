@@ -30,6 +30,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -176,6 +177,11 @@ fun VideoContent(
     // Hidden until the video is tapped: opening the player (from the mini-player too) and
     // rotating in or out of fullscreen never pop the controls up.
     var controlsVisible by remember { mutableStateOf(false) }
+    // Pinch zoom belongs to the picture only.  It is deliberately uncapped: a user can keep
+    // zooming past the source resolution, while captions and the transport controls stay normal.
+    var pictureZoom by remember(state.current?.id) { mutableFloatStateOf(1f) }
+    var picturePan by remember(state.current?.id) { mutableStateOf(Offset.Zero) }
+    var zoomTouchedAt by remember(state.current?.id) { mutableLongStateOf(0L) }
     var touchedAt by remember { mutableLongStateOf(0L) }
     fun touched() { touchedAt = System.nanoTime() }
     // Fullscreen's quality and speed pickers (OverlayDrop, GitHub #25 / #31): the controls stay up while one is open.
@@ -325,16 +331,26 @@ fun VideoContent(
                 // the video's shape, so bars appear only past its limits (and in fullscreen).
                 .fillMaxSize()
                 .aspectFit(state.videoAspect)
-                .clipToBounds(),
+                // Do not clip the transformed TextureView to its original fitted rectangle:
+                // a fullscreen pinch may expand through the complete display.
         ) {
             Box(
                 Modifier
                     .fillMaxSize()
+                    .pointerInput(state.current?.id) {
+                        detectTransformGestures { _, pan, zoomChange, _ ->
+                            val next = (pictureZoom * zoomChange).coerceAtLeast(1f)
+                            pictureZoom = next
+                            picturePan = if (next == 1f) Offset.Zero else picturePan + pan
+                            zoomTouchedAt = System.nanoTime()
+                        }
+                    }
                     .graphicsLayer {
                         val n = nudge.value
-                        translationX = burstSide * 5.dp.toPx() * n
-                        scaleX = 1f + 0.03f * n
-                        scaleY = 1f + 0.03f * n
+                        translationX = picturePan.x + burstSide * 5.dp.toPx() * n
+                        translationY = picturePan.y
+                        scaleX = pictureZoom * (1f + 0.03f * n)
+                        scaleY = pictureZoom * (1f + 0.03f * n)
                     },
             ) {
                 // Under the (transparent until it has a frame) TextureView, so opening or
@@ -362,6 +378,21 @@ fun VideoContent(
                 val played = if (state.durationMs > 0) (state.positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f
                 drawRect(Color.White, size = Size(size.width * played, size.height))
             }
+        }
+        val zoomHud by animateFloatAsState(
+            if (pictureZoom > 1f && System.nanoTime() - zoomTouchedAt < 1_700_000_000L) 1f else 0f,
+            label = "zoomHud",
+        )
+        if (zoomHud > 0f) {
+            Text(
+                "${(pictureZoom * 100).toInt()}%",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (fullscreen) 42.dp else 10.dp)
+                    .clip(CircleShape).background(Color.Black.copy(alpha = 0.58f)).padding(horizontal = 12.dp, vertical = 6.dp)
+                    .graphicsLayer { alpha = zoomHud },
+            )
         }
         SeekBurstPill(burstSide, burstSeconds, burstTaps, burstActive, fullscreen)
         FastHoldPill(

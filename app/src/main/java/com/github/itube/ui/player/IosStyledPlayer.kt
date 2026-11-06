@@ -440,7 +440,7 @@ fun IosStyledPlayer(
                         .clickable { MusicPlayerState.togglePlayPause() },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isLoading) {
+                    if (isLoading && !isPlaying) {
                         CircularProgressIndicator(
                             color = Color.White,
                             strokeWidth = 3.dp,

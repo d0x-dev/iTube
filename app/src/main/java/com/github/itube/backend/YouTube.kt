@@ -56,12 +56,12 @@ data class VideoItem(
     val id: String,
     val title: String,
     val channel: String,
-    val channelUrl: String?,
-    val thumbnail: String?,
-    val avatar: String?,
-    val durationSec: Long,
-    val views: Long,
-    val uploaded: String?,
+    val channelUrl: String? = null,
+    val thumbnail: String? = null,
+    val avatar: String? = null,
+    val durationSec: Long = 0L,
+    val views: Long = 0L,
+    val uploaded: String? = null,
 )
 
 /** A YouTube search row. Unlike [VideoItem], this also represents channels and playlists. */
@@ -373,10 +373,17 @@ object YouTube {
     // ── Channels ──
 
     suspend fun channel(url: String): ChannelDetails = withContext(Dispatchers.IO) {
-        val info = ChannelInfo.getInfo(service, url)
+        val fullUrl = when {
+            url.startsWith("http://") || url.startsWith("https://") -> url
+            url.startsWith("/") -> "https://www.youtube.com$url"
+            url.startsWith("@") -> "https://www.youtube.com/$url"
+            url.startsWith("UC") -> "https://www.youtube.com/channel/$url"
+            else -> "https://www.youtube.com/channel/$url"
+        }
+        val info = ChannelInfo.getInfo(service, fullUrl)
         fun tab(filter: String) = info.tabs.firstOrNull { it.contentFilters.contains(filter) }
         ChannelDetails(
-            url = url,
+            url = fullUrl,
             id = info.id,
             name = info.name,
             avatar = info.avatars.bestUrl(targetWidth = 176),
@@ -402,30 +409,45 @@ object YouTube {
         })
     }
 
-    /** Channel Shorts is a real YouTube tab, not a client-side guess from uploads. */
+    /** Channel Shorts: tries native InnerTube browse first, then falls back to NewPipe extractor. */
     suspend fun channelShorts(channel: ChannelDetails): List<VideoItem> = withContext(Dispatchers.IO) {
-        val tab = channel.shortsTab ?: return@withContext emptyList()
-        ChannelTabInfo.getInfo(service, tab).relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { item ->
-            item.toVideoItem()?.copy(channel = item.uploaderName.orEmpty().ifBlank { channel.name }, avatar = item.uploaderAvatars.bestUrl(targetWidth = 96) ?: channel.avatar, channelUrl = item.uploaderUrl ?: channel.url)
+        runCatching { InnerTube.channelShorts(channel.id) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { list ->
+            return@withContext list.map {
+                it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
+            }
         }
+        val tab = channel.shortsTab ?: return@withContext emptyList()
+        runCatching {
+            ChannelTabInfo.getInfo(service, tab).relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { item ->
+                item.toVideoItem()?.copy(channel = item.uploaderName.orEmpty().ifBlank { channel.name }, avatar = item.uploaderAvatars.bestUrl(targetWidth = 96) ?: channel.avatar, channelUrl = item.uploaderUrl ?: channel.url)
+            }
+        }.getOrDefault(emptyList())
     }
 
     /** Playlists and albums in a channel tab keep their own URLs so they can open as pages. */
     suspend fun channelCollections(channel: ChannelDetails, albums: Boolean): List<PublicCollection> = withContext(Dispatchers.IO) {
-        val tab = (if (albums) channel.albumsTab else channel.playlistsTab) ?: return@withContext emptyList()
-        ChannelTabInfo.getInfo(service, tab).relatedItems.filterIsInstance<PlaylistInfoItem>().map { item ->
-            PublicCollection(
-                url = item.url,
-                title = item.name,
-                subtitle = listOfNotNull(item.uploaderName?.takeIf { it.isNotBlank() }, item.streamCount.takeIf { it > 0 }?.let { "$it songs" }, if (albums) "Album" else "Playlist").joinToString(" · "),
-                thumbnail = item.thumbnails.bestUrl(),
-                isAlbum = albums,
-            )
+        if (albums) {
+            runCatching { InnerTube.channelReleases(channel.id) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+        } else {
+            runCatching { InnerTube.channelPlaylists(channel.id) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
         }
+        val tab = (if (albums) channel.albumsTab else channel.playlistsTab) ?: return@withContext emptyList()
+        runCatching {
+            ChannelTabInfo.getInfo(service, tab).relatedItems.filterIsInstance<PlaylistInfoItem>().map { item ->
+                PublicCollection(
+                    url = item.url,
+                    title = item.name,
+                    subtitle = listOfNotNull(item.uploaderName?.takeIf { it.isNotBlank() }, item.streamCount.takeIf { it > 0 }?.let { "$it songs" }, if (albums) "Album" else "Playlist").joinToString(" · "),
+                    thumbnail = item.thumbnails.bestUrl(),
+                    isAlbum = albums,
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
-    /** Loads a public search/channel playlist or album without requiring the signed-in library. */
+    /** Loads a public search/channel playlist or album via InnerTube browse with NewPipe fallback. */
     suspend fun publicCollection(url: String, isAlbum: Boolean = false): PublicCollectionDetails = withContext(Dispatchers.IO) {
+        runCatching { InnerTube.publicCollection(url, isAlbum) }.getOrNull()?.takeIf { it.videos.isNotEmpty() }?.let { return@withContext it }
         val info = PlaylistInfo.getInfo(service, url)
         val collection = PublicCollection(
             url = url,

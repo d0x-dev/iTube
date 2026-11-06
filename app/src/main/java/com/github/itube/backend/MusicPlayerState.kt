@@ -1,6 +1,7 @@
 package com.github.itube
 
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
@@ -13,6 +14,8 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -21,7 +24,10 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.core.content.ContextCompat
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import com.github.itube.backend.lyrics.LyricsHelper
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +51,8 @@ object MusicPlayerState : Player.Listener {
     private var progressJob: Job? = null
     private var lyricsJob: Job? = null
     private var loadJob: Job? = null
+    /** True while a new URL is being extracted, before ExoPlayer has a buffering state. */
+    private var resolvingStream = false
 
     // ── Observable UI States ──
     var currentTrack by mutableStateOf<MusicTrack?>(null)
@@ -100,12 +108,24 @@ object MusicPlayerState : Player.Listener {
         exoPlayer = ExoPlayer.Builder(appContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .setLooper(Looper.getMainLooper())
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .apply {
                 addListener(this@MusicPlayerState)
                 volume = this@MusicPlayerState.volume
             }
 
+        // Keep the media session connected while the app is open. This is deliberately a bind,
+        // not a foreground-service start; Media3 promotes the service only for real playback.
+        ensureSystemMediaSession()
         startProgressLoop()
     }
 
@@ -115,13 +135,39 @@ object MusicPlayerState : Player.Listener {
         return requireNotNull(exoPlayer)
     }
 
+    private var musicControllerFuture: ListenableFuture<MediaController>? = null
+    private var musicController: MediaController? = null
+
+    fun onServiceDestroyed() {
+        musicController = null
+    }
+
     private fun ensureSystemMediaSession() {
         val context = appContext ?: return
-        ContextCompat.startForegroundService(context, Intent(context, MusicPlaybackService::class.java))
+        if (musicControllerFuture != null || musicController != null) return
+        val token = SessionToken(context, ComponentName(context, MusicPlaybackService::class.java))
+        val future = MediaController.Builder(context, token).buildAsync()
+        musicControllerFuture = future
+        future.addListener({
+            runCatching { future.get() }
+                .onSuccess { controller -> musicController = controller }
+                .onFailure { error ->
+                    musicControllerFuture = null
+                    Log.e(TAG, "Failed to connect MusicPlaybackService", error)
+                }
+        }, ContextCompat.getMainExecutor(context))
     }
 
     private fun stopSystemMediaSession() {
-        appContext?.stopService(Intent(appContext, MusicPlaybackService::class.java))
+        val context = appContext ?: return
+        try {
+            musicControllerFuture?.let(MediaController::releaseFuture)
+            musicControllerFuture = null
+            musicController = null
+            context.stopService(Intent(context, MusicPlaybackService::class.java))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop MusicPlaybackService", e)
+        }
     }
 
     private fun startProgressLoop() {
@@ -135,7 +181,9 @@ object MusicPlayerState : Player.Listener {
                         durationMs = dur
                     }
                     isPlaying = player.isPlaying
-                    isLoading = player.playbackState == Player.STATE_BUFFERING
+                    // Never leave a spinner over audio that is already audible. Some streams
+                    // report a buffering transition while their buffered audio is playing.
+                    isLoading = !player.isPlaying && (resolvingStream || player.playbackState == Player.STATE_BUFFERING)
                 }
                 delay(200)
             }
@@ -146,11 +194,24 @@ object MusicPlayerState : Player.Listener {
         onPlaybackStarted?.invoke()
         expanded = true
         loadJob?.cancel()
+        // A new selection is a hard handoff: never let the previous song keep playing while
+        // its replacement URL is being extracted.
+        exoPlayer?.let { player ->
+            player.playWhenReady = false
+            player.pause()
+        }
+        resolvingStream = true
+        isPlaying = false
+        isLoading = true
+        positionMs = 0L
+        durationMs = 0L
+        currentTrack = track
+        // Match the video player: a MediaController connection lets Media3 publish its own
+        // native Android media card when this player reaches a playable state.
+        ensureSystemMediaSession()
+        ListeningProfile.record(track)
         loadJob = scope.launch {
             try {
-                isLoading = true
-                currentTrack = track
-
                 // If an explicit new queue is provided and it's distinct from the current queue, replace it defensively
                 if (newQueue != null && newQueue !== queue) {
                     val snapshot = newQueue.toList()
@@ -179,11 +240,15 @@ object MusicPlayerState : Player.Listener {
                 val streamUrl = MusicBackend.resolveAudioStreamUrl(track.id)
                 if (streamUrl.isNullOrBlank()) {
                     Log.e(TAG, "Failed to resolve stream URL for track: ${track.id}")
+                    resolvingStream = false
                     isLoading = false
                     return@launch
                 }
 
                 exoPlayer?.let { player ->
+                    // Normally already bound from init; retain this call for a service that the
+                    // system reclaimed while the app stayed open.
+                    ensureSystemMediaSession()
                     val mediaItem = MediaItem.Builder()
                         .setMediaId(track.id)
                         .setUri(streamUrl)
@@ -197,16 +262,33 @@ object MusicPlayerState : Player.Listener {
                         )
                         .build()
                     player.setMediaItem(mediaItem)
-                    // Start the foreground MediaSession only after metadata exists, so Android
-                    // can publish a complete notification immediately.
-                    ensureSystemMediaSession()
                     player.prepare()
                     player.playWhenReady = true
                     player.play()
+                    resolvingStream = false
+                    // A tap on a single song becomes a radio based on that song, not a random
+                    // leftover queue. Do this after playback starts so loading audio is never held up.
+                    if (newQueue == null) {
+                        scope.launch(Dispatchers.IO) {
+                            val radio = MusicBackend.relatedTracks(track)
+                            withContext(Dispatchers.Main) {
+                                if (currentTrack?.id == track.id && queue.size <= 1 && radio.isNotEmpty()) {
+                                    queue.clear()
+                                    queue.add(track)
+                                    queue.addAll(radio)
+                                    queueIndex = 0
+                                }
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Error playing music track", e)
-                isLoading = false
+                if (currentTrack?.id == track.id) {
+                    resolvingStream = false
+                    isLoading = false
+                }
             }
         }
     }
@@ -380,7 +462,16 @@ object MusicPlayerState : Player.Listener {
 
     // ── Player.Listener Callbacks ──
     override fun onPlaybackStateChanged(playbackState: Int) {
-        isLoading = playbackState == Player.STATE_BUFFERING
+        val playingNow = exoPlayer?.isPlaying == true
+        // READY means the source and duration are known. The transport must become a pause
+        // control at that point, even if a vendor reports a late buffering callback.
+        if (playbackState == Player.STATE_READY) {
+            resolvingStream = false
+            isLoading = false
+            durationMs = exoPlayer?.duration?.takeIf { it > 0L } ?: durationMs
+        } else {
+            isLoading = !playingNow && (resolvingStream || playbackState == Player.STATE_BUFFERING)
+        }
         if (playbackState == Player.STATE_ENDED) {
             if (repeatMode == Player.REPEAT_MODE_ONE) {
                 seekTo(0L)
@@ -395,10 +486,15 @@ object MusicPlayerState : Player.Listener {
 
     override fun onIsPlayingChanged(playing: Boolean) {
         isPlaying = playing
+        if (playing) {
+            resolvingStream = false
+            isLoading = false
+        }
     }
 
     override fun onPlayerError(error: PlaybackException) {
         Log.e(TAG, "ExoPlayer error: ${error.message}", error)
+        resolvingStream = false
         isLoading = false
         isPlaying = false
     }

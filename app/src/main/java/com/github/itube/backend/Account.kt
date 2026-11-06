@@ -257,6 +257,221 @@ object InnerTube {
 
     /** The channel page's Videos tab selector (as on youtube.com, 2026-10-06). */
     private const val CHANNEL_VIDEOS_TAB = "EgZ2aWRlb3PyBgQKAjoA"
+    private const val CHANNEL_SHORTS_TAB = "EgZzaG9ydHPyBgUKA5oBAA=="
+    private const val CHANNEL_RELEASES_TAB = "EghyZWxlYXNlc_IGBQoDsgEA"
+    private const val CHANNEL_PLAYLISTS_TAB = "EglwbGF5bGlzdHPyBgoKCEIGCgIQaCIA"
+
+    /** Channel Shorts tab via native InnerTube browse request. */
+    suspend fun channelShorts(channelId: String): List<VideoItem> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("browseId", channelId).put("params", CHANNEL_SHORTS_TAB)
+        val root = postAny("browse", body)
+        val list = mutableListOf<VideoItem>()
+        root.walk { key, obj ->
+            if (key == "shortsLockupViewModel") {
+                val eid = obj.optString("entityId")
+                var vid = eid.removePrefix("shorts-shelf-item-")
+                if (vid.isBlank()) {
+                    val url = obj.optJSONObject("onTap")?.optJSONObject("innertubeCommand")
+                        ?.optJSONObject("commandMetadata")?.optJSONObject("webCommandMetadata")?.optString("url").orEmpty()
+                    if (url.contains("/shorts/")) vid = url.substringAfter("/shorts/").substringBefore("?")
+                }
+                if (vid.isNotBlank()) {
+                    val title = obj.optJSONObject("overlayMetadata")?.optJSONObject("primaryText")?.optString("content").orEmpty()
+                    val viewsStr = obj.optJSONObject("overlayMetadata")?.optJSONObject("secondaryText")?.optString("content").orEmpty()
+                    val thumb = obj.firstImageSource() ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                    list += VideoItem(
+                        id = vid,
+                        title = title,
+                        channel = "",
+                        thumbnail = thumb,
+                        durationSec = 0L,
+                        views = parseViews(viewsStr),
+                        uploaded = null,
+                    )
+                }
+            } else if (key == "reelItemRenderer") {
+                val vid = obj.optString("videoId")
+                if (vid.isNotBlank()) {
+                    val title = obj.text("headline") ?: obj.text("title") ?: ""
+                    val viewsStr = obj.text("viewCountText") ?: ""
+                    val thumb = obj.firstImageSource() ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                    list += VideoItem(
+                        id = vid,
+                        title = title,
+                        channel = "",
+                        thumbnail = thumb,
+                        durationSec = 0L,
+                        views = parseViews(viewsStr),
+                        uploaded = null,
+                    )
+                }
+            }
+        }
+        list.distinctBy { it.id }
+    }
+
+    /** Channel Releases tab (Albums, Singles, EPs) via native InnerTube browse. */
+    suspend fun channelReleases(channelId: String): List<PublicCollection> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("browseId", channelId).put("params", CHANNEL_RELEASES_TAB)
+        val root = postAny("browse", body)
+        parsePublicCollections(root, isAlbum = true)
+    }
+
+    /** Channel Playlists tab via native InnerTube browse. */
+    suspend fun channelPlaylists(channelId: String): List<PublicCollection> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("browseId", channelId).put("params", CHANNEL_PLAYLISTS_TAB)
+        val root = postAny("browse", body)
+        parsePublicCollections(root, isAlbum = false)
+    }
+
+    private fun parsePublicCollections(root: JSONObject, isAlbum: Boolean): List<PublicCollection> {
+        val list = mutableListOf<PublicCollection>()
+        root.walk { key, obj ->
+            if (key == "playlistRenderer" || key == "gridPlaylistRenderer") {
+                val pid = obj.optString("playlistId").ifBlank { return@walk }
+                val title = obj.text("title").orEmpty()
+                val countText = obj.text("videoCountText") ?: obj.text("videoCountShortText") ?: ""
+                val thumb = obj.thumbnails()?.lastOrNull() ?: obj.firstImageSource()
+                list += PublicCollection(
+                    url = "https://www.youtube.com/playlist?list=$pid",
+                    title = title,
+                    subtitle = listOfNotNull(countText.takeIf { it.isNotBlank() }, if (isAlbum) "Album" else "Playlist").joinToString(" · "),
+                    thumbnail = thumb,
+                    isAlbum = isAlbum,
+                )
+            } else if (key == "lockupViewModel" && obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_PLAYLIST") {
+                val pid = obj.optString("contentId").ifBlank { return@walk }
+                val meta = obj.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
+                val title = meta?.optJSONObject("title")?.optString("content").orEmpty()
+                val thumb = obj.firstImageSource()
+                val sub = obj.collectStrings("content").firstOrNull { it.contains("video", ignoreCase = true) || it.contains("track", ignoreCase = true) }
+                    ?: if (isAlbum) "Album" else "Playlist"
+                list += PublicCollection(
+                    url = "https://www.youtube.com/playlist?list=$pid",
+                    title = title,
+                    subtitle = sub,
+                    thumbnail = thumb,
+                    isAlbum = isAlbum,
+                )
+            }
+        }
+        return list.distinctBy { it.url }
+    }
+
+    /** Loads public playlists and music albums via InnerTube browse with both new lockupViewModel and classic renderers. */
+    suspend fun publicCollection(playlistIdOrUrl: String, isAlbum: Boolean = false): PublicCollectionDetails = withContext(Dispatchers.IO) {
+        val cleanId = playlistIdOrUrl.removePrefix("VL").let {
+            if (it.contains("list=")) it.substringAfter("list=").substringBefore("&") else it
+        }
+        val browseId = if (cleanId.startsWith("VL")) cleanId else "VL$cleanId"
+        val root = postAny("browse", JSONObject().put("browseId", browseId))
+
+        var title = ""
+        var author = ""
+        var sub = ""
+        var thumb: String? = null
+
+        val hdr = root.optJSONObject("header")
+        if (hdr != null) {
+            val phr = hdr.optJSONObject("playlistHeaderRenderer")
+            if (phr != null) {
+                title = phr.text("title").orEmpty()
+                author = phr.optJSONObject("ownerText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text").orEmpty()
+                sub = phr.optJSONObject("numVideosText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text").orEmpty()
+                thumb = phr.optJSONObject("playlistHeaderBanner")?.optJSONObject("heroPlaylistThumbnailRenderer")?.optJSONObject("thumbnail")?.thumbnails()?.lastOrNull()
+            }
+            val pageHeader = hdr.optJSONObject("pageHeaderRenderer")?.optJSONObject("content")?.optJSONObject("pageHeaderViewModel")
+            if (pageHeader != null) {
+                if (title.isBlank()) title = pageHeader.optJSONObject("title")?.optJSONObject("dynamicTextViewModel")?.optJSONObject("text")?.optString("content").orEmpty()
+                pageHeader.optJSONObject("metadata")?.optJSONObject("contentMetadataViewModel")?.optJSONArray("metadataRows")?.let { rows ->
+                    for (i in 0 until rows.length()) {
+                        val parts = rows.optJSONObject(i)?.optJSONArray("metadataParts") ?: continue
+                        for (j in 0 until parts.length()) {
+                            val content = parts.optJSONObject(j)?.optJSONObject("text")?.optString("content").orEmpty()
+                            if (content.isNotBlank()) {
+                                if (author.isBlank() && content.contains("by ", ignoreCase = true)) author = content
+                                else if (sub.isBlank()) sub = content
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        val videos = mutableListOf<VideoItem>()
+        root.walk { key, obj ->
+            if (key == "lockupViewModel" && obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
+                val vid = obj.optString("contentId").ifBlank { return@walk }
+                val meta = obj.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
+                val vt = meta?.optJSONObject("title")?.optString("content").orEmpty()
+                var vchan = author
+                var vviews = ""
+                meta?.optJSONObject("metadata")?.optJSONObject("contentMetadataViewModel")?.optJSONArray("metadataRows")?.let { rows ->
+                    for (i in 0 until rows.length()) {
+                        val parts = rows.optJSONObject(i)?.optJSONArray("metadataParts") ?: continue
+                        for (j in 0 until parts.length()) {
+                            val t = parts.optJSONObject(j)?.optJSONObject("text")?.optString("content").orEmpty()
+                            if (t.isNotBlank()) {
+                                if (t.contains("view", ignoreCase = true)) vviews = t
+                                else if (vchan.isBlank() || vchan == author) vchan = t
+                            }
+                        }
+                    }
+                }
+                val vimg = obj.firstImageSource() ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                if (vt.isNotBlank()) {
+                    videos += VideoItem(
+                        id = vid,
+                        title = vt,
+                        channel = vchan,
+                        thumbnail = vimg,
+                        durationSec = 0L,
+                        views = parseViews(vviews),
+                        uploaded = null,
+                    )
+                }
+            } else if (key == "playlistVideoRenderer") {
+                val vid = obj.optString("videoId").ifBlank { return@walk }
+                val vt = obj.text("title").orEmpty()
+                val vchan = obj.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: author
+                val dur = obj.text("lengthText")
+                val vimg = obj.thumbnails()?.lastOrNull() ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                if (vt.isNotBlank()) {
+                    videos += VideoItem(
+                        id = vid,
+                        title = vt,
+                        channel = vchan,
+                        thumbnail = vimg,
+                        durationSec = parseDuration(dur),
+                        views = -1L,
+                        uploaded = null,
+                    )
+                }
+            }
+        }
+        val distinctVideos = videos.distinctBy { it.id }
+        if (thumb == null) thumb = distinctVideos.firstOrNull()?.thumbnail
+
+        val finalSub = listOfNotNull(
+            author.removePrefix("by ").removePrefix("By ").takeIf { it.isNotBlank() },
+            sub.takeIf { it.isNotBlank() },
+            if (isAlbum) "Album" else "Playlist",
+            "${distinctVideos.size} songs"
+        ).distinct().joinToString(" · ")
+
+        val collection = PublicCollection(
+            url = "https://www.youtube.com/playlist?list=$cleanId",
+            title = title.ifBlank { if (isAlbum) "Album" else "Playlist" },
+            subtitle = finalSub,
+            thumbnail = thumb,
+            isAlbum = isAlbum,
+        )
+        PublicCollectionDetails(
+            collection = collection,
+            description = "",
+            videos = distinctVideos,
+        )
+    }
     suspend fun subscriptionsFeed(next: String? = null) = browse("FEsubscriptions", next)
     suspend fun history(next: String? = null) = browse("FEhistory", next)
     suspend fun playlist(id: String, next: String? = null) = browse("VL$id", next)

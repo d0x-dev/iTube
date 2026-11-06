@@ -2,19 +2,34 @@ package com.github.itube
 
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 
 /**
- * Owns the Android media-session surface for the dedicated music player.  The music UI keeps
- * its existing player state, while this service publishes that exact player to Android so the
- * notification, lock screen, Bluetooth buttons and system media controls work in the background.
+ * Android's one music session and notification owner.
+ *
+ * This follows AirBeats' lifecycle: the app binds this service before playback, then Media3
+ * promotes its own notification only once the shared player is actually ready. Starting a
+ * foreground service after audio has already begun races Android's deadline and was the source
+ * of the ForegroundServiceDidNotStartInTime crash.
  */
 class MusicPlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
+        setListener(object : MediaSessionService.Listener {
+            override fun onForegroundServiceStartNotAllowedException() {
+                // A bound service retries with the next player update instead of crashing on
+                // Android 12+ background-start restrictions.
+            }
+        })
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider(this).apply {
+                setSmallIcon(R.drawable.itube)
+            },
+        )
         val openApp = PendingIntent.getActivity(
             this,
             1,
@@ -22,8 +37,6 @@ class MusicPlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, MusicPlayerState.playerForSession(this))
-            // The video service can be alive at the same time. Media3 rejects two sessions
-            // with its default empty ID, which previously crashed the whole process.
             .setId("itube_music")
             .setSessionActivity(openApp)
             .build()
@@ -31,7 +44,12 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        super.onUpdateNotification(session, startInForegroundRequired)
+    }
+
     override fun onDestroy() {
+        MusicPlayerState.onServiceDestroyed()
         session?.release()
         session = null
         super.onDestroy()
