@@ -20,11 +20,8 @@ android {
 
     buildTypes {
         debug {
-            isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
         release {
             // Judge speed and smoothness on this build type, never on debug.
@@ -65,6 +62,12 @@ android {
 afterEvaluate {
     val copyDebugApk = tasks.register("copyDebugApkAsITube") {
         dependsOn("packageDebug")
+        // Finalizers run even when an earlier assemble task fails.  In that case Android has
+        // not produced an APK, so let Gradle report the original failure instead of masking it
+        // with a missing-file exception from this convenience copy task.
+        onlyIf {
+            layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile.isFile
+        }
         doLast {
             val apk = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
             apk.copyTo(File(apk.parentFile, "iTube.apk"), overwrite = true)
@@ -76,6 +79,9 @@ afterEvaluate {
 
     val copyReleaseApk = tasks.register("copyReleaseApkAsITube") {
         dependsOn("packageRelease")
+        onlyIf {
+            layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile.isFile
+        }
         doLast {
             val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
             apk.copyTo(File(apk.parentFile, "iTube.apk"), overwrite = true)

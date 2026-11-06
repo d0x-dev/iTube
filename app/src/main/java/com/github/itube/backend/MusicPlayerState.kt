@@ -192,6 +192,11 @@ object MusicPlayerState : Player.Listener {
         }
     }
 
+    /** Re-fetch lyrics for the current song without interrupting audio playback. */
+    fun refreshLyrics() {
+        currentTrack?.let(::fetchLyricsForCurrentTrack)
+    }
+
     fun pause() {
         exoPlayer?.let { player ->
             if (player.isPlaying) {
