@@ -55,6 +55,9 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -64,6 +67,9 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QueueMusic
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.AnimatedEqualizer
+import com.github.itube.ui.components.TrackBlurPopup
+import com.github.itube.ui.components.popupContainerColor
+import com.github.itube.ui.components.popupScrimColor
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -379,7 +385,10 @@ class SearchState(private val scope: CoroutineScope) {
     // Video search state
     var submitted by mutableStateOf("")
         private set
-    var results by mutableStateOf<List<VideoItem>>(emptyList())
+    var results by mutableStateOf<List<SearchResult>>(emptyList())
+        private set
+    /** All is the default and uses YouTube's real ALL result filter. */
+    var filter by mutableStateOf(SearchFilter.All)
         private set
     var loading by mutableStateOf(false)
         private set
@@ -401,6 +410,22 @@ class SearchState(private val scope: CoroutineScope) {
     var musicGeneration by mutableStateOf(0)
         private set
     private var musicJob: Job? = null
+    var suggestions by mutableStateOf<List<String>>(emptyList())
+        private set
+    private var suggestionsJob: Job? = null
+
+    fun updateQuery(value: String) {
+        query = value
+        suggestionsJob?.cancel()
+        if (value.trim().length < 2) {
+            suggestions = emptyList()
+            return
+        }
+        suggestionsJob = scope.launch {
+            kotlinx.coroutines.delay(180)
+            suggestions = runCatching { YouTube.suggestions(value.trim()) }.getOrDefault(emptyList())
+        }
+    }
 
     fun selectCategory(newCategory: SearchCategory) {
         if (category == newCategory) return
@@ -414,6 +439,13 @@ class SearchState(private val scope: CoroutineScope) {
         }
     }
 
+    /** Selecting a row in the search filter sheet immediately refreshes the active query. */
+    fun selectFilter(newFilter: SearchFilter) {
+        if (filter == newFilter) return
+        filter = newFilter
+        if (category == SearchCategory.Videos && query.trim().isNotEmpty()) submit()
+    }
+
     fun submit() {
         val q = query.trim()
         if (q.isEmpty()) return
@@ -424,7 +456,7 @@ class SearchState(private val scope: CoroutineScope) {
             error = null
             job?.cancel()
             job = scope.launch {
-                runCatching { YouTube.search(q) }
+                runCatching { YouTube.search(q, filter) }
                     .onSuccess { results = it; generation++ }
                     .onFailure { error = YouTube.friendlyError(it) }
                 loading = false
@@ -450,6 +482,8 @@ fun SearchScreen(
     state: SearchState,
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
+    onOpenResult: (SearchResult) -> Unit,
+    onSettings: () -> Unit,
     scrollToTop: Int = 0,
 ) {
     val c = MaterialTheme.colorScheme
@@ -469,6 +503,7 @@ fun SearchScreen(
         state.submit()
     }
     var focused by remember { mutableStateOf(false) }
+    var filtersOpen by remember { mutableStateOf(false) }
     // The keyboard closed by Back or its own button leaves the field focused; drop the focus
     // with it so the history gives way to the results again.
     val imeVisible = WindowInsets.isImeVisible
@@ -478,12 +513,20 @@ fun SearchScreen(
     // Past searches, filtered by what's typed: while typing, and on the empty page.
     val history = SearchHistory.matching(state.query)
     val showHistory = history.isNotEmpty() && (focused || currentSubmitted.isEmpty())
+    val showSuggestions = focused && state.query.trim().length >= 2 && state.suggestions.isNotEmpty()
 
     // The search bar rides with the header: both slide away together while scrolling results.
     CollapsingHeaderLayout(
         resetKey = listOf(scrollToTop, state.generation, state.musicGeneration, state.category, showHistory),
         header = { Column {
-        ScreenHeader(title = "Search")
+        // This remains a Search page; filters are separate from application settings.
+        ScreenHeader(
+            title = "Search",
+        ) {
+            if (state.category == SearchCategory.Videos) {
+                CircleAction(Icons.Rounded.Tune, "Search filters") { filtersOpen = true }
+            }
+        }
         Row(
             modifier = Modifier
                 .padding(horizontal = 16.dp)
@@ -499,7 +542,7 @@ fun SearchScreen(
             Box(Modifier.weight(1f)) {
                 if (state.query.isEmpty()) {
                     Text(
-                        if (state.category == SearchCategory.Videos) "Search YouTube" else "Search YouTube Music",
+                        if (state.category == SearchCategory.Videos) "Search iTube" else "Search iMusic",
                         color = c.onSurfaceVariant,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold
@@ -507,7 +550,7 @@ fun SearchScreen(
                 }
                 BasicTextField(
                     value = state.query,
-                    onValueChange = { state.query = it },
+                    onValueChange = state::updateQuery,
                     singleLine = true,
                     textStyle = OwnDirectionText.merge(TextStyle(color = c.onSurface, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)),
                     cursorBrush = SolidColor(c.primary),
@@ -524,13 +567,13 @@ fun SearchScreen(
             }
             if (state.query.isNotEmpty()) {
                 Box(
-                    modifier = Modifier.size(44.dp).pressable { state.query = "" },
+                    modifier = Modifier.size(44.dp).pressable { state.updateQuery("") },
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Rounded.Close, "Clear", tint = c.onSurfaceVariant) }
             }
         }
 
-        // Two Segment Buttons: Videos vs Music
+        // Switch the source without losing the typed query.
         Row(
             modifier = Modifier
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)
@@ -568,7 +611,7 @@ fun SearchScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = "Videos",
+                        text = "iTube",
                         color = videosFg,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
@@ -606,7 +649,7 @@ fun SearchScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = "Music",
+                        text = "iMusic",
                         color = musicFg,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
@@ -622,6 +665,11 @@ fun SearchScreen(
                 val listShown = showHistory || (state.results.isNotEmpty() && state.error == null)
                 Box(Modifier.padding(top = if (listShown) 0.dp else top)) {
                     when {
+                        showSuggestions -> SearchSuggestionsList(
+                            suggestions = state.suggestions,
+                            contentPadding = contentPadding.withTop(top),
+                            onSearch = { state.updateQuery(it); submit() },
+                        )
                         showHistory -> SearchHistoryList(
                             history = history,
                             contentPadding = contentPadding.withTop(top),
@@ -650,8 +698,8 @@ fun SearchScreen(
                             val list = rememberScrollToTop(scrollToTop)
                             LaunchedEffect(state.generation) { list.scrollToItem(0) }
                             LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
-                                items(state.results, key = { it.id }) { video ->
-                                    VideoCard(video, onClick = { onOpen(video) })
+                                items(state.results, key = { it.id }) { result ->
+                                    SearchResultCard(result, onOpen, onOpenResult)
                                 }
                             }
                         }
@@ -702,6 +750,87 @@ fun SearchScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+    if (filtersOpen) SearchFiltersSheet(
+        selected = state.filter,
+        onSelected = { filter ->
+            state.selectFilter(filter)
+            filtersOpen = false
+        },
+        onDismiss = { filtersOpen = false },
+    )
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchFiltersSheet(
+    selected: SearchFilter,
+    onSelected: (SearchFilter) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = popupContainerColor(c.surfaceContainerLow),
+        scrimColor = popupScrimColor(),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+            Text("Search filters", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+            Spacer(Modifier.height(8.dp))
+            Text("Choose what to search for", color = c.onSurfaceVariant, fontSize = 14.sp)
+            Spacer(Modifier.height(16.dp))
+            SearchFilter.entries.forEach { filter ->
+                val active = selected == filter
+                Row(
+                    Modifier.fillMaxWidth().pressable { onSelected(filter) }.padding(vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(filter.label, modifier = Modifier.weight(1f), fontWeight = if (active) FontWeight.ExtraBold else FontWeight.SemiBold, fontSize = 16.sp)
+                    if (active) Icon(Icons.Rounded.Check, "Selected", tint = c.primary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultCard(result: SearchResult, onOpen: (VideoItem) -> Unit, onOpenResult: (SearchResult) -> Unit) {
+    result.video?.let { video ->
+        VideoCard(video, onClick = { onOpen(video) })
+        return
+    }
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(20.dp)).background(c.surfaceContainerLow).pressable { onOpenResult(result) }.padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Thumbnail(result.thumbnail, Modifier.size(68.dp), radius = 16)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(result.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(result.subtitle, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SearchSuggestionsList(suggestions: List<String>, contentPadding: PaddingValues, onSearch: (String) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    LazyColumn(contentPadding = contentPadding) {
+        items(suggestions, key = { it }) { suggestion ->
+            Row(
+                modifier = Modifier.fillMaxWidth().height(52.dp).pressable { onSearch(suggestion) }.padding(horizontal = 24.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Search, null, tint = c.onSurfaceVariant, modifier = Modifier.size(21.dp))
+                Spacer(Modifier.width(16.dp))
+                Text(suggestion, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

@@ -38,6 +38,8 @@ object SharedVideoTexture {
     /** Bumped when the surface first exists, so players can be pointed at it. */
     var version by mutableIntStateOf(0)
         private set
+    /** The visible decoded TextureView, used for real-time fullscreen ambient sampling. */
+    var activeView: TextureView? = null
 
     fun adopt(view: TextureView, fresh: SurfaceTexture) {
         val kept = texture
@@ -63,6 +65,7 @@ fun VideoSurface(player: Player?, modifier: Modifier = Modifier) {
         modifier = modifier,
         factory = { context ->
             TextureView(context).apply {
+                SharedVideoTexture.activeView = this
                 // A view created after the texture exists shows it straight away.
                 SharedVideoTexture.texture?.let { runCatching { setSurfaceTexture(it) } }
                 surfaceTextureListener = object : TextureView.SurfaceTextureListener {

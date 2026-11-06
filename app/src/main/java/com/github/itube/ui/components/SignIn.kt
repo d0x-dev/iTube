@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountCircle
@@ -46,6 +47,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -164,60 +166,129 @@ fun AccountSheet(onSignIn: () -> Unit, onSignedOut: () -> Unit, onDismiss: () ->
     TrackBlurPopup()
     val c = MaterialTheme.colorScheme
     val profile = Account.profile
+    var detail by remember { mutableStateOf<SettingsDetail?>(null) }
+    // One sheet for the entire account/settings flow. skipPartiallyExpanded means it opens
+    // at full height while remaining a normal draggable sheet that can be pulled down.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = popupContainerColor(c.surfaceContainerLow),
         scrimColor = popupScrimColor(),
     ) {
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (profile == null) {
-                Text("Your YouTube, without the ads", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Sign in to get your recommendations, subscriptions, history and playlists. " +
-                        "Likes, subscribes, Watch later and watch history sync back to your account.\n\n" +
-                        "Google treats unofficial apps as against its terms and can suspend accounts that use them. " +
-                        "A secondary Google account keeps that risk away from your main one.",
-                    color = c.onSurfaceVariant, fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(20.dp))
-                PillButton("Sign in with Google", { onDismiss(); onSignIn() })
+        Column(Modifier.fillMaxSize()) {
+            if (detail == null) {
+                AccountSettingsHome(profile, onSignIn, onSignedOut, onDismiss) { detail = it }
             } else {
-                ChannelAvatar(profile.avatar, profile.name, size = 72)
-                Spacer(Modifier.height(12.dp))
-                Text(profile.name, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                profile.handle?.let { Text(it, color = c.onSurfaceVariant, fontSize = 14.sp) }
-                Spacer(Modifier.height(20.dp))
-                PillButton("Sign out", { Account.signOut(); onSignedOut(); onDismiss() }, Icons.AutoMirrored.Rounded.Logout)
-            }
-            // Settings live here (Derek's choice): every tab's header has this sheet.
-            Spacer(Modifier.height(28.dp))
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.surfaceContainer).padding(18.dp)) {
-                AppearanceSettings()
-            }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.surfaceContainer).padding(18.dp)) {
-                BlurSettings()
-            }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.surfaceContainer).padding(18.dp)) {
-                PlayerControlsSettings()
-            }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.surfaceContainer).padding(18.dp)) {
-                CaptionSettingsCard()
-            }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.surfaceContainer).padding(18.dp)) {
-                ShortsSettings()
-            }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(c.surfaceContainer).padding(18.dp)) {
-                SponsorBlockSettings()
+                SettingsDetailContent(detail!!, onBack = { detail = null })
             }
         }
     }
 }
+
+private enum class SettingsDetail { Appearance, Captions, SponsorBlock, Player, Shorts, PopupEffects, About }
+
+@Composable
+private fun AccountSettingsHome(
+    profile: Profile?,
+    onSignIn: () -> Unit,
+    onSignedOut: () -> Unit,
+    onDismiss: () -> Unit,
+    onOpen: (SettingsDetail) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (profile == null) {
+            Text("Your YouTube, without the ads", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Sign in to get your recommendations, subscriptions, history and playlists. " +
+                    "Likes, subscribes, Watch later and watch history sync back to your account.\n\n" +
+                    "Google treats unofficial apps as against its terms and can suspend accounts that use them. " +
+                    "A secondary Google account keeps that risk away from your main one.",
+                color = c.onSurfaceVariant, fontSize = 14.sp, lineHeight = 20.sp, textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(20.dp))
+            PillButton("Sign in with Google", { onDismiss(); onSignIn() })
+        } else {
+            ChannelAvatar(profile.avatar, profile.name, size = 72)
+            Spacer(Modifier.height(12.dp))
+            Text(profile.name, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+            profile.handle?.let { Text(it, color = c.onSurfaceVariant, fontSize = 14.sp) }
+            Spacer(Modifier.height(20.dp))
+            PillButton("Sign out", { Account.signOut(); onSignedOut(); onDismiss() }, Icons.AutoMirrored.Rounded.Logout)
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("Settings", modifier = Modifier.fillMaxWidth(), fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+        Spacer(Modifier.height(10.dp))
+        SettingsEntry(R.drawable.settings_appearance, "Appearance", "Theme, colours and AMOLED") { onOpen(SettingsDetail.Appearance) }
+        SettingsEntry(R.drawable.settings_captions, "Captions", "Language, style and translation") { onOpen(SettingsDetail.Captions) }
+        SettingsEntry(R.drawable.settings_sponsorblock, "SponsorBlock", "Skip sponsors and other segments") { onOpen(SettingsDetail.SponsorBlock) }
+        SettingsEntry(R.drawable.settings_player, "Player controls", "Video control preferences") { onOpen(SettingsDetail.Player) }
+        SettingsEntry(R.drawable.settings_shorts, "Shorts", "Shorts feed preferences") { onOpen(SettingsDetail.Shorts) }
+        SettingsEntry(R.drawable.settings_effects, "Popup effects", "Frosted popup appearance") { onOpen(SettingsDetail.PopupEffects) }
+        SettingsEntry(R.drawable.settings_info, "About iTube", "App information, developers and updates") { onOpen(SettingsDetail.About) }
+    }
+}
+
+@Composable
+private fun SettingsEntry(icon: Int, title: String, summary: String, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().pressable(onClick = onClick).padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(painterResource(icon), null, tint = c.onSurface, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(summary, color = c.onSurfaceVariant, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun SettingsDetailContent(detail: SettingsDetail, onBack: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(44.dp).pressable { onBack() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.ArrowBack, "Back", tint = c.onSurface)
+            }
+            Text(detail.title, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
+            when (detail) {
+                SettingsDetail.Appearance -> AppearanceSettings()
+                SettingsDetail.Captions -> CaptionSettingsCard()
+                SettingsDetail.SponsorBlock -> SponsorBlockSettings()
+                SettingsDetail.Player -> PlayerControlsSettings()
+                SettingsDetail.Shorts -> ShortsSettings()
+                SettingsDetail.PopupEffects -> BlurSettings()
+                SettingsDetail.About -> {
+                    BrandMark()
+                    Spacer(Modifier.height(12.dp))
+                    Text("iTube", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+                    Text("Version 1.0.0", color = c.onSurfaceVariant, fontSize = 14.sp)
+                    Spacer(Modifier.height(22.dp))
+                    Text("Developers", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text("d0x-dev", color = c.onSurfaceVariant, fontSize = 15.sp)
+                    Spacer(Modifier.height(18.dp))
+                    Text("Updates", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                    Text("Checks releases from github.com/d0x-dev/iTube.", color = c.onSurfaceVariant, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
+
+private val SettingsDetail.title: String
+    get() = when (this) {
+        SettingsDetail.Appearance -> "Appearance"
+        SettingsDetail.Captions -> "Captions"
+        SettingsDetail.SponsorBlock -> "SponsorBlock"
+        SettingsDetail.Player -> "Player controls"
+        SettingsDetail.Shorts -> "Shorts"
+        SettingsDetail.PopupEffects -> "Popup effects"
+        SettingsDetail.About -> "About iTube"
+    }

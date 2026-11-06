@@ -11,13 +11,21 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,10 +33,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.CloudOff
@@ -38,11 +48,41 @@ import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import com.github.itube.ui.components.MaterialLoader
+import com.github.itube.ui.components.TrackBlurPopup
+import com.github.itube.ui.components.popupContainerColor
+import com.github.itube.ui.components.popupScrimColor
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import android.widget.Toast
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -96,6 +136,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -110,6 +152,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
+import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -298,6 +342,14 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
     /** How far into the short on screen, 0..1 (the line along the screen's bottom edge). */
     var progress by mutableFloatStateOf(0f)
         private set
+    var playbackSpeed by mutableFloatStateOf(1f)
+        private set
+    var selectedQuality by mutableStateOf<Int?>(null)
+        private set
+    var selectedAudioTrackId by mutableStateOf<String?>(null)
+        private set
+    val qualityByShort = mutableStateMapOf<String, Int?>()
+    val audioTrackByShort = mutableStateMapOf<String, String?>()
     private var loop: Job? = null
     /** How many shorts past this one get a player loading them; 1 once the device runs out of video decoders. */
     private var maxAhead = 2
@@ -454,6 +506,9 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
         if (page == index) return
         assigned[index]?.exo?.let { it.playWhenReady = false; it.seekTo(0) }
         index = page
+        val curId = items.getOrNull(page)?.id
+        selectedQuality = curId?.let { qualityByShort[it] }
+        selectedAudioTrackId = curId?.let { audioTrackByShort[it] }
         userPaused = false
         progress = 0f
         commentsOpen = false
@@ -645,15 +700,22 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
     private fun prepare(p: ShortPlayer, why: String): Boolean {
         val id = p.id ?: return false
         val item = MediaItem.Builder().setMediaId(id).setUri(YouTube.watchUrl(id)).build()
-        ShortsBank.get(id)?.let { e ->
-            p.prepare(why, ShortsBank.mediaSource(e.video, e.audio, item), e.urls, banked = true)
-            // Seen already (it's the one on screen): the player has it now; the bank lets it go.
-            if (id in viewed) ShortsBank.forget(id)
-            return true
+        val wantedQuality = qualityByShort[id] ?: selectedQuality
+        val wantedAudio = audioTrackByShort[id] ?: selectedAudioTrackId
+        if (wantedQuality == null && wantedAudio == null) {
+            ShortsBank.get(id)?.let { e ->
+                p.prepare(why, ShortsBank.mediaSource(e.video, e.audio, item), e.urls, banked = true)
+                // Seen already (it's the one on screen): the player has it now; the bank lets it go.
+                if (id in viewed) ShortsBank.forget(id)
+                return true
+            }
         }
-        if (!details.containsKey(id)) return false
+        if (!details.containsKey(id)) {
+            want(id)
+            return false
+        }
         val info = StreamCache.get(id)
-        val tracks = info?.let { ShortsBank.tracks(it) }
+        val tracks = info?.let { ShortsBank.tracks(it, wantedQuality, wantedAudio) }
         if (tracks == null) {
             // Links expired (or the network changed) since they were fetched: fetch again.
             if (info == null) details.remove(id) else failed[id] = "This Short can't play right now."
@@ -827,6 +889,120 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
 
     fun toggleLike() = setLike(LikeStatus.Like)
     fun toggleDislike() = setLike(LikeStatus.Dislike)
+
+    /** Applies the selected speed to the current Short and the preloaded pages. */
+    fun applyPlaybackSpeed(speed: Float) {
+        playbackSpeed = speed
+        pool.forEach { it.exo.playbackParameters = PlaybackParameters(speed) }
+    }
+
+    data class AudioTrackChoice(
+        val id: String,
+        val label: String,
+        val language: String? = null,
+        val isOriginal: Boolean = true,
+        val isDubbed: Boolean = false,
+        val bitrateKbps: Int = 0
+    )
+
+    fun audioTracksForCurrent(): List<AudioTrackChoice> {
+        val item = current ?: return emptyList()
+        val info = StreamCache.get(item.id)
+        if (info != null) {
+            val fromStreams = info.audioStreams.orEmpty()
+                .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.itagItem != null }
+                .sortedWith(
+                    compareByDescending<org.schabi.newpipe.extractor.stream.AudioStream> {
+                        it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL
+                    }.thenBy { it.audioTrackName ?: it.audioLocale?.displayName ?: "" }.thenByDescending { it.averageBitrate }
+                )
+                .distinctBy { it.audioTrackId ?: "itag:${it.itag}" }
+                .map { stream ->
+                    val name = stream.audioTrackName
+                        ?: stream.audioLocale?.displayName
+                        ?: if (stream.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL) "Original" else "Audio"
+                    val dubbed = if (stream.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.DUBBED) " · Dubbed" else ""
+                    val kbps = if (stream.averageBitrate > 0) " · ${stream.averageBitrate / 1000} kbps" else ""
+                    AudioTrackChoice(
+                        id = stream.audioTrackId ?: "itag:${stream.itag}",
+                        label = "$name$dubbed$kbps",
+                        language = stream.audioLocale?.displayName ?: stream.audioTrackName ?: name,
+                        isOriginal = stream.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL || stream.audioTrackType == null,
+                        isDubbed = stream.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.DUBBED,
+                        bitrateKbps = stream.averageBitrate / 1000
+                    )
+                }
+            if (fromStreams.isNotEmpty()) return fromStreams
+        }
+        val fromDetails = details[item.id]?.audioTracks
+        if (!fromDetails.isNullOrEmpty()) {
+            return fromDetails.map {
+                AudioTrackChoice(it.id, it.label, it.language, it.isOriginal, it.isDubbed, it.bitrate / 1000)
+            }
+        }
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { StreamCache.getOrLoad(item.id) }.onSuccess {
+                val d = details[item.id] ?: YouTube.details(item.id, wait = false)
+                details[item.id] = d
+                poke()
+            }
+        }
+        return emptyList()
+    }
+
+    /** Full ladder from the extractor, including rungs absent from the lightweight details card. */
+    fun qualitiesForCurrent(): List<Int> {
+        val item = current ?: return emptyList()
+        val info = StreamCache.get(item.id)
+        if (info != null) {
+            val heights = StreamSelection.heights(info)
+            if (heights.isNotEmpty()) return heights
+        }
+        val fromDetails = details[item.id]?.qualities
+        if (!fromDetails.isNullOrEmpty()) return fromDetails
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { StreamCache.getOrLoad(item.id) }.onSuccess {
+                val d = details[item.id] ?: YouTube.details(item.id, wait = false)
+                details[item.id] = d
+                poke()
+            }
+        }
+        return emptyList()
+    }
+
+    fun selectQuality(height: Int?) {
+        val item = current ?: return
+        selectedQuality = height
+        qualityByShort[item.id] = height
+        rebuildCurrentStreams()
+    }
+
+    fun selectAudioTrack(trackId: String?) {
+        val item = current ?: return
+        selectedAudioTrackId = trackId
+        audioTrackByShort[item.id] = trackId
+        rebuildCurrentStreams()
+    }
+
+    /** Re-extracts the two selected streams and replaces the live Short without leaving the feed. */
+    private fun rebuildCurrentStreams() {
+        val item = current ?: return
+        val player = assigned[index] ?: return
+        val wantedQuality = qualityByShort[item.id] ?: selectedQuality
+        val wantedAudio = audioTrackByShort[item.id] ?: selectedAudioTrackId
+        scope.launch {
+            val info = StreamCache.get(item.id) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { StreamCache.getOrLoad(item.id) }.getOrNull()
+            } ?: return@launch
+            val tracks = ShortsBank.tracks(info, wantedQuality, wantedAudio) ?: return@launch
+            val resumeAt = player.exo.currentPosition
+            val mediaItem = MediaItem.Builder().setMediaId(item.id).setUri(YouTube.watchUrl(item.id)).build()
+            player.prepare("stream option", ShortsBank.mediaSource(tracks.first, tracks.second, mediaItem), listOf(tracks.first.url, tracks.second.url), banked = false)
+            player.exo.playbackParameters = PlaybackParameters(playbackSpeed)
+            player.exo.seekTo(resumeAt)
+            player.exo.playWhenReady = !userPaused
+        }
+    }
 
     fun toggleSubscribe() {
         val id = current?.id ?: return
@@ -1016,6 +1192,7 @@ internal class ShortPlayer(context: Context, private val state: ShortsState) {
         prepared = true
         urls = streamUrls
         this.banked = banked
+        exo.playbackParameters = PlaybackParameters(state.playbackSpeed)
         exo.setMediaSource(source)
         exo.prepare()
     }
@@ -1116,6 +1293,13 @@ private class CappedLoadControl(
  */
 @Composable
 fun ShortsScreen(shorts: ShortsState, progress: () -> Float, overlayBottom: Dp) {
+    var headerVisible by remember { mutableStateOf(true) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showDescription by remember { mutableStateOf(false) }
+    var showDownload by remember { mutableStateOf(false) }
+    var showQuality by remember { mutableStateOf(false) }
+    var showAudioTracks by remember { mutableStateOf(false) }
+    var showSpeed by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Box(
             Modifier
@@ -1128,7 +1312,9 @@ fun ShortsScreen(shorts: ShortsState, progress: () -> Float, overlayBottom: Dp) 
                 },
         ) {
             when {
-                shorts.items.isNotEmpty() -> key(shorts.feedVersion) { ShortsPager(shorts, overlayBottom) }
+                shorts.items.isNotEmpty() -> key(shorts.feedVersion) {
+                    ShortsPager(shorts, overlayBottom, onHeaderVisible = { headerVisible = it })
+                }
                 shorts.error != null && !shorts.loading -> ShortsProblem(shorts.error.orEmpty(), onRetry = shorts::refresh)
                 else -> MaterialLoader(color = Ink, size = 36.dp, modifier = Modifier.align(Alignment.Center))
             }
@@ -1162,7 +1348,782 @@ fun ShortsScreen(shorts: ShortsState, progress: () -> Float, overlayBottom: Dp) 
                 CommentsPanel(shorts.comments, partialTop = maxHeight * 0.42f, onClose = { shorts.commentsOpen = false })
             }
         }
+        AnimatedVisibility(
+            visible = headerVisible || shorts.userPaused,
+            enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { -it / 2 },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { -it / 2 },
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            ShortsHeader(onMore = { showMenu = true })
+        }
+        val clipboard = LocalClipboardManager.current
+        val context = LocalContext.current
+        if (showMenu) {
+            ShortsMoreSheet(
+                shorts = shorts,
+                onDismiss = { showMenu = false },
+                onDescription = { showMenu = false; showDescription = true },
+                onDownload = { showMenu = false; showDownload = true },
+                onQuality = { showMenu = false; showQuality = true },
+                onAudioTracks = { showMenu = false; showAudioTracks = true },
+                onSpeed = { showMenu = false; showSpeed = true },
+                onCopyLink = {
+                    showMenu = false
+                    shorts.current?.let {
+                        clipboard.setText(AnnotatedString("https://youtube.com/shorts/${it.id}"))
+                        Toast.makeText(context, "Link copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        }
+        if (showDescription) {
+            ShortsDescriptionSheet(shorts, onDismiss = { showDescription = false })
+        }
+        if (showDownload) {
+            shorts.current?.let { video -> DownloadSheet(video = video, onDismiss = { showDownload = false }) }
+        }
+        if (showQuality) {
+            ShortsQualitySheet(shorts, onDismiss = { showQuality = false })
+        }
+        if (showAudioTracks) {
+            ShortsAudioTrackSheet(shorts, onDismiss = { showAudioTracks = false })
+        }
+        if (showSpeed) {
+            ShortsSpeedSheet(shorts, onDismiss = { showSpeed = false })
+        }
     }
+}
+
+@Composable
+private fun ShortsHeader(onMore: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = buildAnnotatedString {
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Color(0xFFFF1744))) { append("i") }
+                withStyle(androidx.compose.ui.text.SpanStyle(color = Ink)) { append("Shorts") }
+            },
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            style = LocalTextStyle.current.copy(shadow = Shadow(Color.Black.copy(alpha = 0.55f), Offset(0f, 2f), 5f)),
+        )
+        Icon(
+            Icons.Rounded.MoreVert,
+            contentDescription = "Shorts options",
+            tint = Ink,
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onMore)
+                .padding(5.dp),
+        )
+    }
+}
+
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShortsMoreSheet(
+    shorts: ShortsState,
+    onDismiss: () -> Unit,
+    onDescription: () -> Unit,
+    onDownload: () -> Unit,
+    onQuality: () -> Unit,
+    onAudioTracks: () -> Unit,
+    onSpeed: () -> Unit,
+    onCopyLink: () -> Unit,
+) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
+    val details = shorts.current?.let { shorts.details[it.id] }
+    val audioChoices = shorts.audioTracksForCurrent()
+    val activeAudio = audioChoices.firstOrNull { it.id == shorts.selectedAudioTrackId }?.language
+        ?: audioChoices.firstOrNull { it.id == shorts.selectedAudioTrackId }?.label
+        ?: "Original"
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = popupContainerColor(c.surfaceContainer),
+        contentColor = c.onSurface,
+        scrimColor = popupScrimColor(),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = null,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 18.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Short Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = c.onSurface)
+                    details?.item?.title?.let {
+                        Text(it, color = c.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close", tint = c.onSurfaceVariant)
+                }
+            }
+
+            ShortsOption(Icons.Rounded.Description, "Description", "View info, facts, channels & links", onDescription)
+            ShortsOption(Icons.Rounded.Speed, "Playback speed", if (shorts.playbackSpeed == 1f) "Normal (1.0×)" else "${shorts.playbackSpeed}×", onSpeed)
+            ShortsOption(Icons.Rounded.HighQuality, "Quality", shorts.selectedQuality?.let { "${it}p" } ?: "Auto", onQuality)
+            ShortsOption(Icons.Rounded.GraphicEq, "Audio track", activeAudio, onAudioTracks)
+            ShortsOption(Icons.Rounded.Download, "Download", "Save video or audio offline", onDownload)
+            ShortsOption(Icons.Outlined.ContentCopy, "Copy link", "Copy the YouTube Shorts link", onCopyLink)
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun ShortsOption(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(c.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = c.onSurface, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.fillMaxWidth()) {
+            Text(title, fontWeight = FontWeight.SemiBold, color = c.onSurface, fontSize = 15.sp)
+            Text(subtitle, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@kotlin.OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun ShortsDescriptionSheet(shorts: ShortsState, onDismiss: () -> Unit) {
+    TrackBlurPopup()
+    val item = shorts.current ?: return
+    val details = shorts.details[item.id]
+    val c = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val uriHandler = LocalUriHandler.current
+    val description = details?.description.orEmpty().ifBlank { details?.item?.title.orEmpty() }
+
+    var bodyExpanded by remember(description) { mutableStateOf(false) }
+    var bodyOverflows by remember(description) { mutableStateOf(false) }
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    val accountState = shorts.accountStates[item.id]
+    val isSubscribed = accountState?.subscribed == true
+
+    val annotated = remember(description, c.primary) {
+        val timestampRanges = Regex("(?<!\\d)(?:\\d{1,2}:)?\\d{1,2}:\\d{2}(?!\\d)")
+            .findAll(description).map { it.range }.toList()
+        buildAnnotatedString {
+            append(description)
+            timestampRanges.forEach { range ->
+                addStyle(SpanStyle(color = c.primary, fontWeight = FontWeight.Bold), range.first, range.last + 1)
+                addStringAnnotation("timestamp", description.substring(range), range.first, range.last + 1)
+            }
+            Regex("https?://[^\\s]+|www\\.[^\\s]+").findAll(description).forEach { match ->
+                val start = match.range.first
+                val end = match.range.last + 1
+                if (timestampRanges.none { it.first < end && it.last + 1 > start }) {
+                    addStyle(SpanStyle(color = c.primary, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline), start, end)
+                    addStringAnnotation("url", match.value, start, end)
+                }
+            }
+        }
+    }
+    val hashtags = remember(description) {
+        Regex("(?<!\\w)#[\\p{L}\\p{N}_]+").findAll(description).map { it.value }.distinct().take(10).toList()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = popupContainerColor(c.surfaceContainer),
+        contentColor = c.onSurface,
+        scrimColor = popupScrimColor(),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Description",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = c.onSurface,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(description))
+                            Toast.makeText(context, "Description copied", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(38.dp),
+                    ) {
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy", tint = c.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = c.onSurfaceVariant, modifier = Modifier.size(22.dp))
+                    }
+                }
+            }
+
+            SelectionContainer {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, lineHeight = 22.sp),
+                    color = c.onSurface,
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.surfaceContainerHigh)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(42.dp).clip(CircleShape)) {
+                    Thumbnail(item.avatar ?: item.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = item.channel,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = c.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    details?.subscribers?.takeIf { it > 0 }?.let { subs ->
+                        Text(
+                            text = "${shortViews(subs)} subscribers",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.onSurfaceVariant,
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (isSubscribed) c.surfaceContainerHighest else c.primary)
+                        .clickable { shorts.toggleSubscribe() }
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = if (isSubscribed) "Subscribed" else "Subscribe",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = if (isSubscribed) c.onSurface else c.onPrimary,
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ShortsFactChip(
+                    title = details?.likes?.takeIf { it > 0 }?.let(::shortViews) ?: "—",
+                    label = "Likes",
+                    modifier = Modifier.weight(1f),
+                )
+                ShortsFactChip(
+                    title = item.views.takeIf { it >= 0 }?.let(::shortViews) ?: "—",
+                    label = "Views",
+                    modifier = Modifier.weight(1f),
+                )
+                ShortsFactChip(
+                    title = item.uploaded?.trim()?.ifBlank { "Recent" } ?: "Recent",
+                    label = "Uploaded",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(c.surfaceContainerHigh)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = annotated,
+                        color = c.onSurface,
+                        fontSize = 14.sp,
+                        lineHeight = 22.sp,
+                        maxLines = if (bodyExpanded) Int.MAX_VALUE else 5,
+                        overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { textLayout = it; bodyOverflows = it.hasVisualOverflow },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateContentSize()
+                            .pointerInput(annotated) {
+                                detectTapGestures { point ->
+                                    val offset = textLayout?.getOffsetForPosition(point) ?: return@detectTapGestures
+                                    val timestamp = annotated.getStringAnnotations("timestamp", offset, offset).firstOrNull()?.item
+                                    if (timestamp != null) {
+                                        val seconds = timestamp.split(':').mapNotNull(String::toLongOrNull).fold(0L) { acc, v -> acc * 60 + v }
+                                        shorts.assigned[shorts.index]?.exo?.seekTo(seconds * 1000L)
+                                        Toast.makeText(context, "Seeked to $timestamp", Toast.LENGTH_SHORT).show()
+                                        return@detectTapGestures
+                                    }
+                                    annotated.getStringAnnotations("url", offset, offset).firstOrNull()?.item?.let { url ->
+                                        runCatching { uriHandler.openUri(if (url.startsWith("www.")) "https://$url" else url) }
+                                    }
+                                }
+                            },
+                    )
+                }
+
+                if (bodyOverflows || bodyExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { bodyExpanded = !bodyExpanded }
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (bodyExpanded) "Show less" else "Show more",
+                            color = c.primary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+
+            if (hashtags.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    hashtags.forEach { tag ->
+                        Text(
+                            text = tag,
+                            color = c.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    runCatching { uriHandler.openUri("https://www.youtube.com/hashtag/${tag.removePrefix("#")}") }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+
+            details?.chapters?.takeIf { it.isNotEmpty() }?.let { chapters ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(c.surfaceContainerHigh)
+                        .padding(14.dp),
+                ) {
+                    Text("Chapters (${chapters.size})", fontWeight = FontWeight.Bold, color = c.onSurface, modifier = Modifier.padding(bottom = 8.dp))
+                    chapters.forEach { ch ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    shorts.assigned[shorts.index]?.exo?.seekTo(ch.startMs)
+                                    onDismiss()
+                                }
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = formatDuration(ch.startMs),
+                                fontWeight = FontWeight.Bold,
+                                color = c.primary,
+                                fontSize = 13.sp,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = ch.title,
+                                color = c.onSurface,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun ShortsFactChip(title: String, label: String, modifier: Modifier = Modifier) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.surfaceContainerHigh)
+            .padding(vertical = 10.dp, horizontal = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = c.onSurface, maxLines = 1)
+        Text(label, fontSize = 11.sp, color = c.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShortsSpeedSheet(shorts: ShortsState, onDismiss: () -> Unit) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
+    val speeds = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = popupContainerColor(c.surfaceContainer),
+        contentColor = c.onSurface,
+        scrimColor = popupScrimColor(),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 18.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("Playback Speed", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = c.onSurface)
+                    Text("Current speed: ${if (shorts.playbackSpeed == 1f) "Normal (1.0×)" else "${shorts.playbackSpeed}×"}", color = c.onSurfaceVariant, fontSize = 13.sp)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close", tint = c.onSurfaceVariant)
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            speeds.forEach { sp ->
+                val picked = shorts.playbackSpeed == sp
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            shorts.applyPlaybackSpeed(sp)
+                            onDismiss()
+                        }
+                        .background(if (picked) c.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                        .padding(horizontal = 14.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = if (sp == 1.0f) "Normal (1.0×)" else "${sp}×",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = if (picked) FontWeight.Bold else FontWeight.Medium,
+                        ),
+                        color = if (picked) c.primary else c.onSurface,
+                    )
+                    if (picked) {
+                        Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShortsQualitySheet(shorts: ShortsState, onDismiss: () -> Unit) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
+    val qualities = shorts.qualitiesForCurrent()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = popupContainerColor(c.surfaceContainer),
+        contentColor = c.onSurface,
+        scrimColor = popupScrimColor(),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 18.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("Quality", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = c.onSurface)
+                    Text("Choose resolution for this Short", color = c.onSurfaceVariant, fontSize = 13.sp)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close", tint = c.onSurfaceVariant)
+                }
+            }
+
+            val autoPicked = shorts.selectedQuality == null
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable {
+                        shorts.selectQuality(null)
+                        onDismiss()
+                    }
+                    .background(if (autoPicked) c.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("Auto", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = if (autoPicked) FontWeight.Bold else FontWeight.Medium), color = if (autoPicked) c.primary else c.onSurface)
+                    Text("Best available up to 1080p", fontSize = 12.sp, color = c.onSurfaceVariant)
+                }
+                if (autoPicked) {
+                    Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                }
+            }
+
+            qualities.forEach { h ->
+                val picked = shorts.selectedQuality == h
+                val tag = when {
+                    h >= 1080 -> "Full HD"
+                    h >= 720 -> "HD"
+                    h <= 240 -> "Data saver"
+                    else -> null
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            shorts.selectQuality(h)
+                            onDismiss()
+                        }
+                        .background(if (picked) c.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                        .padding(horizontal = 14.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "${h}p",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = if (picked) FontWeight.Bold else FontWeight.Medium),
+                            color = if (picked) c.primary else c.onSurface,
+                        )
+                        if (tag != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(c.surfaceContainerHighest)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            ) {
+                                Text(tag, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    if (picked) {
+                        Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShortsAudioTrackSheet(shorts: ShortsState, onDismiss: () -> Unit) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
+    val audioTracks = shorts.audioTracksForCurrent()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = popupContainerColor(c.surfaceContainer),
+        contentColor = c.onSurface,
+        scrimColor = popupScrimColor(),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 18.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("Audio Track", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = c.onSurface)
+                    Text("Dubbed & translated audio streams", color = c.onSurfaceVariant, fontSize = 13.sp)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Rounded.Close, contentDescription = "Close", tint = c.onSurfaceVariant)
+                }
+            }
+
+            val defaultPicked = shorts.selectedAudioTrackId == null
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable {
+                        shorts.selectAudioTrack(null)
+                        onDismiss()
+                    }
+                    .background(if (defaultPicked) c.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text("Default (Original)", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = if (defaultPicked) FontWeight.Bold else FontWeight.Medium), color = if (defaultPicked) c.primary else c.onSurface)
+                    Text("Original video audio track", fontSize = 12.sp, color = c.onSurfaceVariant)
+                }
+                if (defaultPicked) {
+                    Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                }
+            }
+
+            if (audioTracks.isEmpty()) {
+                Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                    Text("Only original audio is available for this Short", color = c.onSurfaceVariant, fontSize = 14.sp)
+                }
+            } else {
+                audioTracks.forEach { track ->
+                    val isPicked = shorts.selectedAudioTrackId == track.id
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable {
+                                shorts.selectAudioTrack(track.id)
+                                onDismiss()
+                            }
+                            .background(if (isPicked) c.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                            .padding(horizontal = 14.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = track.language ?: track.label,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = if (isPicked) FontWeight.Bold else FontWeight.Medium),
+                                    color = if (isPicked) c.primary else c.onSurface,
+                                )
+                                if (track.isDubbed) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(c.primary.copy(alpha = 0.14f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    ) {
+                                        Text("Dubbed", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.primary)
+                                    }
+                                } else if (track.isOriginal) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(c.surfaceContainerHighest)
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    ) {
+                                        Text("Original", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                            if (track.bitrateKbps > 0) {
+                                Text("${track.bitrateKbps} kbps", fontSize = 12.sp, color = c.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+                            }
+                        }
+                        if (isPicked) {
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+private fun shortViews(views: Long): String = when {
+    views >= 1_000_000_000L -> "%.1fB views".format(views / 1_000_000_000.0)
+    views >= 1_000_000L -> "%.1fM views".format(views / 1_000_000.0)
+    views >= 1_000L -> "%.1fK views".format(views / 1_000.0)
+    else -> "$views views"
 }
 
 private val ProgressThickness = 2.5.dp
@@ -1181,9 +2142,17 @@ private fun bottomCornerRadius(view: android.view.View): Int {
 }
 
 @Composable
-private fun ShortsPager(shorts: ShortsState, overlayBottom: Dp) {
+private fun ShortsPager(shorts: ShortsState, overlayBottom: Dp, onHeaderVisible: (Boolean) -> Unit) {
     val pager = rememberPagerState(initialPage = shorts.index.coerceIn(0, (shorts.items.size - 1).coerceAtLeast(0))) { shorts.items.size }
     LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.collect { shorts.select(it) } }
+    LaunchedEffect(pager) {
+        var previous = pager.currentPage + pager.currentPageOffsetFraction
+        snapshotFlow { pager.currentPage + pager.currentPageOffsetFraction }.collect { position ->
+            val delta = position - previous
+            if (kotlin.math.abs(delta) > 0.002f) onHeaderVisible(delta < 0f)
+            previous = position
+        }
+    }
     VerticalPager(
         state = pager,
         modifier = Modifier.fillMaxSize(),

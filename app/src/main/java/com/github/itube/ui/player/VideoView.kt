@@ -1,6 +1,7 @@
 package com.github.itube
 
 import android.view.HapticFeedbackConstants
+import androidx.compose.foundation.Image
 import androidx.media3.common.Player
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.layout.widthIn
@@ -78,7 +79,9 @@ import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.ui.graphics.luminance
 import com.github.itube.ui.components.MaterialLoader
 import androidx.compose.ui.draw.blur
-import com.github.itube.ui.components.BlurSetting
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
 import com.github.itube.ui.components.popupScrimColor
@@ -289,6 +292,33 @@ fun VideoContent(
             }
         }
     }) {
+        // Flow-style live ambient mode: a small frame is sampled from the decoded TextureView,
+        // enlarged and blurred behind the fitted picture.  It changes as the video changes.
+        var ambientFrame by remember(fullscreen) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+        LaunchedEffect(fullscreen) {
+            if (!fullscreen) return@LaunchedEffect
+            while (true) {
+                ambientFrame = SharedVideoTexture.activeView
+                    ?.takeIf { it.isAvailable }
+                    ?.getBitmap(64, 36)
+                    ?.asImageBitmap()
+                delay(220)
+            }
+        }
+        if (fullscreen) {
+            // Before the first decoded frame arrives, use this video's own artwork rather than
+            // a theme colour. Once available, the sampled video frame replaces it every 220ms.
+            ambientFrame?.let { frame ->
+                Image(bitmap = frame, contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().blur(34.dp)
+                        .graphicsLayer { scaleX = 1.18f; scaleY = 1.18f; alpha = 0.88f })
+            } ?: Thumbnail(
+                state.current?.thumbnail,
+                Modifier.fillMaxSize().blur(34.dp).graphicsLayer { scaleX = 1.18f; scaleY = 1.18f; alpha = 0.88f },
+                radius = 0,
+            )
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.20f)))
+        }
         Box(
             Modifier
                 // As large as fits in whatever box we're given. The portrait stage already has
@@ -297,13 +327,9 @@ fun VideoContent(
                 .aspectFit(state.videoAspect)
                 .clipToBounds(),
         ) {
-            val dropBlur by androidx.compose.animation.core.animateDpAsState(
-                targetValue = if (BlurSetting.enabled && fullscreen && drop != null) 18.dp else 0.dp,
-                label = "dropBlur",
-            )
             Box(
-                Modifier.fillMaxSize()
-                    .then(if (dropBlur > 0.dp) Modifier.blur(dropBlur) else Modifier)
+                Modifier
+                    .fillMaxSize()
                     .graphicsLayer {
                         val n = nudge.value
                         translationX = burstSide * 5.dp.toPx() * n
@@ -460,10 +486,10 @@ fun VideoContent(
                             },
                         ) { ink -> Icon(Icons.Rounded.ClosedCaption, null, tint = ink, modifier = Modifier.size(tool * 0.52f)) }
                     }
-                    // The label is the resolution actually decoded; the requested one until known.
-                    (state.decodedHeight?.let { "${it}p" } ?: state.details?.quality)?.let { quality ->
+                    // Compact Flow-style quality badge: FHD / HD while preserving the full picker.
+                    (state.decodedHeight?.let(::compactQualityLabel) ?: state.details?.quality?.let(::compactQualityText))?.let { quality ->
                         OverlayPill(
-                            if (QualityPreference.height == null) "Auto · $quality" else quality, "Quality", enabled, tool,
+                            quality, "Quality", enabled, tool,
                             modifier = Modifier.onGloballyPositioned { dropAnchors[1] = it },
                         ) {
                             touched()
@@ -477,21 +503,26 @@ fun VideoContent(
                         }) { ink -> Icon(Icons.Rounded.PictureInPictureAlt, null, tint = ink, modifier = Modifier.size(tool * 0.5f)) }
                     }
                 }
-                // −10 · play · +10, as on the pill; play a circle a size up from the skips.
+                // Flow-style transport row: previous · play/pause · next.  Other top controls
+                // deliberately stay untouched; this only replaces the former ±10-second tiles.
                 val seek = if (fullscreen) 60.dp else 51.dp
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(if (fullscreen) 32.dp else 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OverlaySeek(-1, enabled, seek) { touched(); state.seekBy(-10_000) }
+                    OverlayTile("Previous", enabled, seek, onClick = { touched(); state.playPrevious() }) {
+                        Icon(painterResource(R.drawable.flow_previous), null, tint = Color.Unspecified, modifier = Modifier.size(if (fullscreen) 30.dp else 26.dp))
+                    }
                     OverlayPlay(
                         playing = state.isPlaying,
                         buffering = state.isBuffering || (state.loading && state.details == null),
                         size = if (fullscreen) 78.dp else 66.dp,
                         enabled = enabled,
                     ) { touched(); state.togglePlay() }
-                    OverlaySeek(1, enabled, seek) { touched(); state.seekBy(10_000) }
+                    OverlayTile("Next", enabled, seek, onClick = { touched(); state.playNextUp() }) {
+                        Icon(painterResource(R.drawable.flow_next), null, tint = Color.Unspecified, modifier = Modifier.size(if (fullscreen) 30.dp else 26.dp))
+                    }
                 }
                 // Times, the Ask pill, Next and fullscreen; under them the scrubber in fullscreen. In portrait
                 // the video's own bottom edge is the scrubber (VideoStage), so the row sits just clear of it.
@@ -736,8 +767,8 @@ fun AudioOnlyStage(
 }
 
 /**
- * A round control on the video, in the playback pill's look: the bar's tone ([tile]), or full
- * primary while [filled] (a mode that's on). [content] draws the glyph in the ink it's given.
+ * A round control on the video. Fullscreen controls use Flow-like smoky glass rather than the
+ * app theme's opaque light/dark surfaces, so they stay readable over any moving video.
  */
 @Composable
 private fun OverlayTile(
@@ -745,12 +776,11 @@ private fun OverlayTile(
     enabled: Boolean,
     size: Dp,
     filled: Boolean = false,
-    tile: Color = MaterialTheme.colorScheme.surfaceVariant,
+    tile: Color = PlayerGlass,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     content: @Composable (ink: Color) -> Unit,
 ) {
-    val c = MaterialTheme.colorScheme
     val view = LocalView.current
     Box(
         modifier
@@ -758,10 +788,10 @@ private fun OverlayTile(
             .size(size)
             .pressable(enabled = enabled) { view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK); onClick() }
             .clip(CircleShape)
-            .background(if (filled) c.primary else tile)
+            .background(if (filled) PlayerGlassStrong else tile)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
-    ) { content(if (filled) c.onPrimary else c.onSurface) }
+    ) { content(Color.White) }
 }
 
 /** A worded control on the video (speed, quality): a capsule [height] tall, otherwise [OverlayTile]'s look. */
@@ -772,11 +802,10 @@ private fun OverlayPill(
     enabled: Boolean,
     height: Dp,
     filled: Boolean = false,
-    tile: Color = MaterialTheme.colorScheme.surfaceVariant,
+    tile: Color = PlayerGlass,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val c = MaterialTheme.colorScheme
     val view = LocalView.current
     Box(
         modifier
@@ -785,12 +814,12 @@ private fun OverlayPill(
             .widthIn(min = height)
             .pressable(enabled = enabled) { view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK); onClick() }
             .clip(CircleShape)
-            .background(if (filled) c.primary else tile)
+            .background(if (filled) PlayerGlassStrong else tile)
             .padding(horizontal = 11.dp)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = if (filled) c.onPrimary else c.onSurface, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
     }
 }
 
@@ -826,28 +855,31 @@ private fun OverlaySeek(side: Int, enabled: Boolean, size: Dp, tile: Color = Mat
 /** Play / pause on the video: a full-primary circle [size] across (Derek, 2026-10-31); a spinner while loading. */
 @Composable
 private fun OverlayPlay(playing: Boolean, buffering: Boolean, size: Dp, enabled: Boolean, onClick: () -> Unit) {
-    val c = MaterialTheme.colorScheme
     val view = LocalView.current
     Box(
         Modifier
             .size(size)
             .pressable(enabled = enabled) { view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK); onClick() }
             .clip(CircleShape)
-            .background(c.primary),
+            .background(PlayerGlassStrong),
         contentAlignment = Alignment.Center,
     ) {
         if (buffering) {
-            MaterialLoader(color = c.onPrimary, size = size * 0.45f)
+            MaterialLoader(color = Color.White, size = size * 0.45f)
         } else {
             Icon(
-                if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                painterResource(if (playing) R.drawable.flow_pause else R.drawable.flow_play),
                 if (playing) "Pause" else "Play",
-                tint = c.onPrimary,
+                tint = Color.Unspecified,
                 modifier = Modifier.size(size * 0.46f).squishOn(playing),
             )
         }
     }
 }
+
+/** Translucent charcoal used by the player over video; it is intentionally theme independent. */
+private val PlayerGlass = Color(0xFF15171C).copy(alpha = 0.58f)
+private val PlayerGlassStrong = Color(0xFF111318).copy(alpha = 0.78f)
 
 /**
  * Hides the picture while the shared surface still holds the frame from before audio only
@@ -1311,7 +1343,8 @@ private fun BoxScope.OverlayDrop(
     onClose: () -> Unit,
     rows: @Composable ColumnScope.(CoroutineScope) -> Unit,
 ) {
-    TrackBlurPopup(open)
+    // Fullscreen quality/speed/caption cards must leave the playing video sharp.  The shared
+    // popup blur is intentionally not used here; only modal sheets elsewhere use that setting.
     val currentClose by androidx.compose.runtime.rememberUpdatedState(onClose)
     if (open) {
         Box(
@@ -1451,6 +1484,16 @@ private fun qualityTag(height: Int): String? = when {
     height <= 240 -> "Data saver"
     else -> null
 }
+
+private fun compactQualityLabel(height: Int): String = when {
+    height >= 2160 -> "4K"
+    height >= 1440 -> "QHD"
+    height >= 1080 -> "FHD"
+    height >= 720 -> "HD"
+    else -> "${height}p"
+}
+
+private fun compactQualityText(quality: String): String = quality.removeSuffix("p").toIntOrNull()?.let(::compactQualityLabel) ?: quality
 
 @Composable
 private fun QualityRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {

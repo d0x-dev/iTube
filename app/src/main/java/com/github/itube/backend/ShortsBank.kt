@@ -114,16 +114,24 @@ object ShortsBank {
      * [BankShortSide] by the short side (lower if pinned lower), M4A audio, each with its manifest.
      * One fixed quality: an adaptive switch mid-short briefly stalled playback (2026-10-29).
      */
-    fun tracks(info: StreamInfo): Pair<Track, Track>? {
+    fun tracks(info: StreamInfo, quality: Int? = null, audioTrackId: String? = null): Pair<Track, Track>? {
         val durationSec = info.duration.takeIf { it > 0 } ?: return null
-        val side = minOf(BankShortSide, QualityPreference.height ?: BankShortSide)
+        // The bank stays conservative on Auto; an explicit choice must be honoured in full.
+        val side = quality ?: minOf(BankShortSide, QualityPreference.height ?: BankShortSide)
         fun shortSide(w: Int, h: Int) = if (w > 0) minOf(w, h) else h
         val videos = info.videoOnlyStreams.filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.itagItem != null && it.height > 0 }
         val family = videos.filter { it.codec?.startsWith("avc") == true }.ifEmpty { videos.filter { it.format == MediaFormat.WEBM } }.ifEmpty { videos }
         val video = (family.filter { shortSide(it.width, it.height) <= side }.ifEmpty { family })
             .maxWithOrNull(compareBy({ if (shortSide(it.width, it.height) <= side) shortSide(it.width, it.height) else -shortSide(it.width, it.height) }, { it.fps }))
             ?: return null
-        val audio = StreamSelection.pick(info).audio?.takeIf { it.itagItem != null } ?: return null
+        val audioCandidates = info.audioStreams.filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.itagItem != null }
+        val audio = audioTrackId?.let { wanted ->
+            audioCandidates.filter {
+                it.audioTrackId == wanted || "itag:${it.itag}" == wanted || it.audioLocale?.language == wanted
+            }.maxByOrNull { it.averageBitrate }
+        } ?: StreamSelection.pick(info).audio?.takeIf { it.itagItem != null }
+          ?: audioCandidates.maxByOrNull { it.averageBitrate }
+          ?: return null
         fun track(s: org.schabi.newpipe.extractor.stream.Stream): Track? = runCatching {
             val itag = s.itagItem!!
             val xml = YoutubeProgressiveDashManifestCreator.fromProgressiveStreamingUrl(s.content, itag, durationSec)

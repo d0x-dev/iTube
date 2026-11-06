@@ -126,6 +126,8 @@ class PlaybackService : MediaSessionService() {
         player.addListener(SessionSaver())
         watchTime = WatchTimeReporter(player).also(player::addListener)
         session = MediaSession.Builder(this, player)
+            // Must differ from MusicPlaybackService when video and music sessions overlap.
+            .setId("itube_video")
             .setSessionActivity(openApp)
             .setCallback(SessionCallback())
             .build()

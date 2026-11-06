@@ -75,6 +75,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PushPin
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.shimmerBrush
@@ -356,10 +357,12 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
 @Composable
 fun CommentsPanel(state: CommentsState, partialTop: Dp, onClose: () -> Unit) {
     val c = MaterialTheme.colorScheme
+    var selectedSort by remember { mutableStateOf("Top") }
     PlayerPanel(
         partialTop = partialTop,
         onClose = onClose,
         closeLabel = "Close comments",
+        containerColor = if (isDarkTheme()) c.surface else Color.White,
         title = {
             Icon(painterResource(R.drawable.ic_comment), null, tint = c.onSurface, modifier = Modifier.size(19.dp))
             Spacer(Modifier.width(8.dp))
@@ -376,6 +379,25 @@ fun CommentsPanel(state: CommentsState, partialTop: Dp, onClose: () -> Unit) {
         }
         LaunchedEffect(nearEnd) { if (nearEnd) state.loadMore() }
         LazyColumn(state = list, modifier = listModifier) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("Top", "Topics", "Timed", "Newest").forEach { label ->
+                        val selected = selectedSort == label
+                        Text(
+                            label,
+                            color = if (selected) c.onPrimary else c.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) c.onSurface else c.surfaceContainerHigh)
+                                .pressable { selectedSort = label }
+                                .padding(horizontal = 13.dp, vertical = 9.dp),
+                        )
+                    }
+                }
+            }
             items(state.comments, key = { it.id }) { comment -> CommentRow(comment, state) }
             if (state.loading || state.hasMore) item {
                 Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) {
@@ -411,6 +433,7 @@ fun PlayerPanel(
     partialTop: Dp,
     onClose: () -> Unit,
     closeLabel: String,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     title: @Composable RowScope.() -> Unit,
     content: @Composable ColumnScope.(listModifier: Modifier) -> Unit,
 ) {
@@ -494,7 +517,7 @@ fun PlayerPanel(
                 .graphicsLayer { translationY = slide.value * size.height }
                 .shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.22f))
                 .clip(shape)
-                .background(c.surfaceContainerLow)
+                .background(containerColor)
                 // Swallow taps so nothing underneath reacts through the panel.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
                 .imePadding(),
@@ -595,6 +618,7 @@ private fun Composer(state: CommentsState) {
 private fun CommentRow(comment: Comment, state: CommentsState, isReply: Boolean = false) {
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
+    var moreOpen by remember(comment.id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(start = if (isReply) 62.dp else 20.dp, end = 20.dp, top = 10.dp, bottom = 6.dp)) {
         ChannelAvatar(comment.avatar, comment.author, size = if (isReply) 28 else 36)
         Spacer(Modifier.width(12.dp))
@@ -603,6 +627,35 @@ private fun CommentRow(comment: Comment, state: CommentsState, isReply: Boolean 
                 if (comment.pinned) Icon(Icons.Rounded.PushPin, "Pinned", tint = c.onSurfaceVariant, modifier = Modifier.size(14.dp))
                 Text(comment.displayName(), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 comment.ago?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1) }
+                Box {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        "Comment options",
+                        tint = c.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp).pressable { moreOpen = true },
+                    )
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = moreOpen,
+                        onDismissRequest = { moreOpen = false },
+                    ) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Share") },
+                            onClick = {
+                                state.currentVideoId?.let { shareLink(context, "https://youtu.be/$it", comment.text) }
+                                moreOpen = false
+                            },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("Copy") },
+                            onClick = {
+                                val clip = android.content.ClipData.newPlainText("Comment", comment.text)
+                                context.getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(clip)
+                                android.widget.Toast.makeText(context, "Comment copied", android.widget.Toast.LENGTH_SHORT).show()
+                                moreOpen = false
+                            },
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(3.dp))
             SelectionContainer {
@@ -656,24 +709,6 @@ private fun CommentRow(comment: Comment, state: CommentsState, isReply: Boolean 
                     Spacer(Modifier.width(12.dp))
                     Icon(Icons.Rounded.Favorite, "Hearted by creator", tint = c.primary, modifier = Modifier.size(14.dp))
                 }
-                Spacer(Modifier.width(12.dp))
-                Icon(
-                    painterResource(R.drawable.ic_share), "Share comment",
-                    tint = c.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp).pressable {
-                        state.currentVideoId?.let { shareLink(context, "https://youtu.be/$it", comment.text) }
-                    },
-                )
-                Spacer(Modifier.width(12.dp))
-                Icon(
-                    Icons.Outlined.ContentCopy, "Copy comment",
-                    tint = c.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp).pressable {
-                        val clip = android.content.ClipData.newPlainText("Comment", comment.text)
-                        context.getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(clip)
-                        android.widget.Toast.makeText(context, "Comment copied", android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                )
                 if (Account.signedIn && !comment.id.startsWith("local-")) {
                     Spacer(Modifier.width(16.dp))
                     Row(

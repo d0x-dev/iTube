@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +59,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.github.itube.ui.components.TrackBlurPopup
+import com.github.itube.ui.components.popupContainerColor
+import com.github.itube.ui.components.popupScrimColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -257,9 +261,14 @@ fun IosStyledPlayer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // The action row is intentionally only 42 dp tall.  Let metadata use
+                        // its real two-line height instead of measuring it into that row and
+                        // clipping the artist's descenders.
+                        .wrapContentHeight(unbounded = true)
                         .padding(end = 4.dp)
                         .align(Alignment.TopStart)
-                        .graphicsLayer { translationY = -46.dp.toPx() }
+                        // Sit just above the button row with tight breathing space, avoiding the high floating gap.
+                        .graphicsLayer { translationY = -50.dp.toPx() }
                 ) {
                     Text(
                         text = track.title,
@@ -637,6 +646,8 @@ private fun MusicOptionsModal(
     onAddToPlaylist: ((VideoItem) -> Unit)? = null,
     onSwitchToVideo: () -> Unit,
 ) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     var showSpeedDialog by remember { mutableStateOf(false) }
@@ -645,8 +656,9 @@ private fun MusicOptionsModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF161616),
-        contentColor = Color.White,
+        containerColor = popupContainerColor(c.surfaceContainer),
+        contentColor = c.onSurface,
+        scrimColor = popupScrimColor(),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = null
     ) {
@@ -676,7 +688,7 @@ private fun MusicOptionsModal(
                     Text(
                         text = track.title,
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White,
+                        color = c.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -684,17 +696,17 @@ private fun MusicOptionsModal(
                     Text(
                         text = track.artists,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.65f),
+                        color = c.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Rounded.Close, contentDescription = "Close", tint = Color.White.copy(alpha = 0.7f))
+                    Icon(Icons.Rounded.Close, contentDescription = "Close", tint = c.onSurfaceVariant)
                 }
             }
 
-            HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+            HorizontalDivider(color = c.outlineVariant.copy(alpha = 0.4f))
             Spacer(Modifier.height(8.dp))
 
             // Speed Selection Sub-View
@@ -706,12 +718,12 @@ private fun MusicOptionsModal(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = { showSpeedDialog = false }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = c.onSurface)
                     }
                     Text(
                         text = "Playback Speed",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White
+                        color = c.onSurface
                     )
                 }
 
@@ -735,10 +747,10 @@ private fun MusicOptionsModal(
                             style = MaterialTheme.typography.bodyLarge.copy(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             ),
-                            color = if (isSelected) Color(0xFFFF0000) else Color.White
+                            color = if (isSelected) c.primary else c.onSurface
                         )
                         if (isSelected) {
-                            Icon(Icons.Rounded.Check, contentDescription = null, tint = Color(0xFFFF0000))
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = c.primary)
                         }
                     }
                 }
@@ -844,6 +856,7 @@ private fun MusicOptionItem(
     subtitle: String? = null,
     onClick: () -> Unit
 ) {
+    val c = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -856,13 +869,13 @@ private fun MusicOptionItem(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f)),
+                .background(c.surfaceContainerHigh),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.90f),
+                tint = c.onSurface,
                 modifier = Modifier.size(22.dp)
             )
         }
@@ -871,13 +884,13 @@ private fun MusicOptionItem(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                color = Color.White
+                color = c.onSurface
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.55f)
+                    color = c.onSurfaceVariant
                 )
             }
         }

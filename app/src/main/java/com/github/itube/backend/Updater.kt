@@ -86,7 +86,7 @@ import java.util.Locale
 object AppUpdate {
     private const val TAG = "AirStream"
     /** Newest first; enough to cover the notes of every release a phone may have skipped. */
-    private const val RELEASES_URL = "https://api.github.com/repos/d0x-dev/AirStream/releases?per_page=30"
+    private const val RELEASES_URL = "https://api.github.com/repos/d0x-dev/iTube/releases?per_page=30"
     /** Android's PackageInstaller session name is internal; upstream's uploaded APK is versioned. */
     private const val APK_ASSET = "iTube.apk"
     private const val CHECK_EVERY_MS = 24 * 60 * 60 * 1000L

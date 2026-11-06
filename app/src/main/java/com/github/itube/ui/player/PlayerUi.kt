@@ -46,6 +46,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -54,6 +55,13 @@ import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.outlined.ContentCopy
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.VideoRowSkeleton
@@ -102,6 +110,9 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import com.github.itube.ui.components.BlurSetting
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
@@ -381,7 +392,7 @@ fun panelRestTop(state: PlayerState): Dp {
     return top + StageTopGap + (screenW - StageSideGap * 2) / state.stageAspect + 10.dp
 }
 
-/** Flow-style video description popup: copy, artwork tint, facts, links, chapters and channel. */
+/** Flow-style video description popup: title, channel, compact facts and expandable body. */
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun VideoDescriptionPanel(state: PlayerState, partialTop: Dp, onClose: () -> Unit) {
@@ -389,7 +400,6 @@ private fun VideoDescriptionPanel(state: PlayerState, partialTop: Dp, onClose: (
     val item = state.current ?: return
     val details = state.details
     val c = MaterialTheme.colorScheme
-    val clipboard = LocalClipboardManager.current
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
     val openChannel = LocalChannelOpener.current
@@ -439,22 +449,26 @@ private fun VideoDescriptionPanel(state: PlayerState, partialTop: Dp, onClose: (
         partialTop = partialTop,
         onClose = onClose,
         closeLabel = "Close description",
-        title = {
-            Text("Description", fontWeight = FontWeight.Bold, fontSize = 19.sp)
-            Box(Modifier.size(40.dp).pressable {
-                clipboard.setText(AnnotatedString(description))
-                state.actionMessage = "Description copied"
-            }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.ContentCopy, "Copy description", tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
-            }
-        },
+        // Light mode is deliberately plain white; dark and AMOLED retain their readable surface.
+        containerColor = if (isDarkTheme()) c.surface else Color.White,
+        title = { },
     ) { listModifier ->
         Column(
             listModifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            SelectionContainer {
-                Text(item.title, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 24.sp)
+            // Title lives in the scrollable content, not beside the fixed close button.
+            Text(
+                item.title,
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
+                lineHeight = 26.sp,
+                maxLines = Int.MAX_VALUE,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ChannelAvatar(details?.item?.avatar ?: item.avatar, item.channel, size = 28)
+                Spacer(Modifier.width(9.dp))
+                Text(item.channel, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -577,18 +591,6 @@ private fun VideoDescriptionPanel(state: PlayerState, partialTop: Dp, onClose: (
                 else Text("Add a note", color = cardInk.copy(alpha = 0.8f), fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
             }
 
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(cardTint)
-                    .pressable(enabled = item.channelUrl != null) { item.channelUrl?.let(openChannel) }.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ChannelAvatar(details?.item?.avatar ?: item.avatar, item.channel, size = 44)
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(item.channel, color = cardInk, fontWeight = FontWeight.SemiBold)
-                    details?.subscribers?.takeIf { it > 0 }?.let { Text("${formatCount(it)} subscribers", color = cardInk.copy(alpha = 0.8f), fontSize = 12.sp) }
-                }
-            }
             Spacer(Modifier.height(22.dp))
         }
     }
@@ -671,7 +673,16 @@ private fun DescriptionFact(value: String, label: String, container: Color, cont
     }
 }
 
-private fun descriptionCount(value: Long): String = java.text.NumberFormat.getIntegerInstance(java.util.Locale.US).format(value)
+private fun descriptionCount(value: Long): String {
+    val (scaled, suffix) = when {
+        value >= 1_000_000_000L -> value / 1_000_000_000.0 to "B"
+        value >= 1_000_000L -> value / 1_000_000.0 to "M"
+        value >= 1_000L -> value / 1_000.0 to "K"
+        else -> return value.toString()
+    }
+    val text = if (scaled >= 100 || scaled % 1.0 == 0.0) scaled.toInt().toString() else "%.1f".format(java.util.Locale.US, scaled).trimEnd('0').trimEnd('.')
+    return text + suffix
+}
 
 /**
  * The pinned video in portrait: the morph's container-transform layer around [VideoContent]
@@ -875,22 +886,51 @@ private fun PlayerActions(state: PlayerState) {
             ChannelAvatar(details?.item?.avatar ?: item.avatar, item.channel, size = 32)
         }
         val subscribed = state.accountState?.subscribed == true
-        Box(
-            Modifier
-                .height(40.dp)
-                .pressable(pressedScale = 0.97f) { state.toggleSubscribe() }
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color.White)
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                if (subscribed) "Subscribed" else "Subscribe",
-                color = Color.Black,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                maxLines = 1,
-            )
+        val channelId = state.accountState?.channelId
+            ?: channelUrl?.substringAfter("/channel/", "")?.takeIf { it.startsWith("UC") }
+        val bellChannel = channelId?.let { BellChannel(it, item.channel, details?.item?.avatar ?: item.avatar) }
+        val toggleBell = rememberBellToggle { state.actionMessage = it }
+        val colors = MaterialTheme.colorScheme
+        if (subscribed && bellChannel != null) {
+            // After YouTube confirms subscription the text button becomes the real channel bell.
+            // Bells.set writes YouTube's notification preference and rolls back if the request fails.
+            val allNotifications = Bells.isOn(bellChannel.id)
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .pressable(pressedScale = 0.92f) { toggleBell(bellChannel) }
+                    .clip(CircleShape)
+                    .background(colors.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                FlourishIcon(
+                    if (allNotifications) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsNone,
+                    if (allNotifications) "All notifications on" else "Turn on all notifications",
+                    active = allNotifications,
+                    kind = Flourish.Ring,
+                    tint = colors.onSurface,
+                    size = 22.dp,
+                )
+            }
+        } else {
+            val lightTheme = colors.surface.luminance() >= 0.5f
+            Box(
+                Modifier
+                    .height(40.dp)
+                    .pressable(enabled = state.accountState != null, pressedScale = 0.97f) { state.toggleSubscribe() }
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (lightTheme) Color.Black else Color.White)
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Subscribe",
+                    color = if (lightTheme) Color.White else Color.Black,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                )
+            }
         }
         // Keep the avatar and Subscribe at the left, with the four action icons grouped toward
         // the right edge. The surrounding horizontal scroll still handles narrower windows.
@@ -915,6 +955,7 @@ private fun AccountActions(state: PlayerState) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     var moreOpen by remember(state.current?.id) { mutableStateOf(false) }
+    var showDownload by remember(state.current?.id) { mutableStateOf(false) }
 
     // Keep the controls visible while signed out or while account state is still loading.
     // setLike safely no-ops until the signed-in state has loaded.
@@ -942,53 +983,80 @@ private fun AccountActions(state: PlayerState) {
         description = "Share video",
     ) { state.current?.let { shareLink(context, "https://youtu.be/${it.id}", it.title) } }
 
-    Box {
-        DrawableActionPill(
-            icon = R.drawable.ic_more_vert,
-            label = null,
-            active = false,
-            description = "More player actions",
-        ) { moreOpen = true }
-        TrackBlurPopup(moreOpen)
-        DropdownMenu(
-            expanded = moreOpen,
-            onDismissRequest = { moreOpen = false },
-            modifier = if (BlurSetting.enabled) {
-                Modifier.background(
-                    popupContainerColor(MaterialTheme.colorScheme.surfaceContainer),
-                    RoundedCornerShape(16.dp)
-                )
-            } else Modifier
-        ) {
-            DropdownMenuItem(
-                text = { Text("Copy video link") },
-                onClick = {
-                    state.current?.let { clipboard.setText(AnnotatedString("https://youtu.be/${it.id}")) }
-                    state.actionMessage = "Link copied"
-                    moreOpen = false
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("Playback speed") },
-                onClick = { state.sheet = PlayerSheet.Speed; moreOpen = false },
-            )
-            DropdownMenuItem(
-                text = { Text("Video quality") },
-                onClick = { state.sheet = PlayerSheet.Quality; moreOpen = false },
-            )
-            DropdownMenuItem(
-                text = { Text("Queue") },
-                onClick = { state.sheet = PlayerSheet.Queue; moreOpen = false },
-            )
-            if (state.captions.tracks.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text("Transcript") },
-                    onClick = { state.sheet = PlayerSheet.Transcript; moreOpen = false },
-                )
-            }
-        }
+    DrawableActionPill(
+        icon = R.drawable.ic_more_vert,
+        label = null,
+        active = false,
+        description = "More player actions",
+    ) { moreOpen = true }
+
+    if (moreOpen) {
+        PlayerMoreSheet(
+            state = state,
+            onDismiss = { moreOpen = false },
+            onCopyLink = {
+                state.current?.let { clipboard.setText(AnnotatedString("https://youtu.be/${it.id}")) }
+                state.actionMessage = "Link copied"
+                moreOpen = false
+            },
+            onDownload = { moreOpen = false; showDownload = true },
+        )
+    }
+    if (showDownload) {
+        DownloadSheet(state, onDismiss = { showDownload = false })
     }
 
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlayerMoreSheet(
+    state: PlayerState,
+    onDismiss: () -> Unit,
+    onCopyLink: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    val item = state.current ?: return
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+                Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp))) { Thumbnail(item.thumbnail, Modifier.fillMaxSize(), radius = 0) }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text("Video options", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(item.title, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                }
+            }
+            PlayerMoreRow(Icons.Rounded.Description, "Description", "Read the video description") { state.sheet = PlayerSheet.Description; onDismiss() }
+            PlayerMoreRow(Icons.Rounded.Speed, "Playback speed", "${PlaybackSpeed.label(state.speed)}×") { state.sheet = PlayerSheet.Speed; onDismiss() }
+            PlayerMoreRow(Icons.Rounded.HighQuality, "Video quality", state.details?.quality ?: "Auto") { state.sheet = PlayerSheet.Quality; onDismiss() }
+            PlayerMoreRow(Icons.Rounded.GraphicEq, "Audio track", "Original") { state.actionMessage = "Original audio track selected"; onDismiss() }
+            PlayerMoreRow(Icons.Rounded.Download, "Download", "Save video or audio") { onDownload() }
+            PlayerMoreRow(Icons.Rounded.QueueMusic, "Queue", "Manage upcoming videos") { state.sheet = PlayerSheet.Queue; onDismiss() }
+            if (state.captions.tracks.isNotEmpty()) PlayerMoreRow(Icons.Rounded.Subtitles, "Transcript", "Read along") { state.sheet = PlayerSheet.Transcript; onDismiss() }
+            PlayerMoreRow(Icons.Outlined.ContentCopy, "Copy video link", "Copy the YouTube link") { onCopyLink() }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun PlayerMoreRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).pressable(onClick = onClick).padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
+        Column(Modifier.padding(start = 16.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(top = 1.dp))
+        }
+    }
 }
 
 @Composable

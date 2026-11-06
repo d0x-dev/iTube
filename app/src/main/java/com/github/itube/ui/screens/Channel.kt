@@ -55,6 +55,14 @@ class ChannelState(val url: String, private val scope: CoroutineScope) {
         private set
     var videos by mutableStateOf<List<VideoItem>>(emptyList())
         private set
+    var shorts by mutableStateOf<List<VideoItem>>(emptyList())
+        private set
+    var releases by mutableStateOf<List<PublicCollection>>(emptyList())
+        private set
+    var playlists by mutableStateOf<List<PublicCollection>>(emptyList())
+        private set
+    var sectionsLoading by mutableStateOf(false)
+        private set
     var loading by mutableStateOf(true)
         private set
     var error by mutableStateOf<String?>(null)
@@ -77,6 +85,13 @@ class ChannelState(val url: String, private val scope: CoroutineScope) {
                     runCatching { YouTube.channelVideos(d, null) }
                         .onSuccess { p -> videos = p.videos; next = p.next }
                         .onFailure { error = YouTube.friendlyError(it) }
+                    sectionsLoading = true
+                    launch {
+                        runCatching { YouTube.channelShorts(d) }.onSuccess { shorts = it }
+                        runCatching { YouTube.channelCollections(d, albums = true) }.onSuccess { releases = it }
+                        runCatching { YouTube.channelCollections(d, albums = false) }.onSuccess { playlists = it }
+                        sectionsLoading = false
+                    }
                 }
                 .onFailure { error = YouTube.friendlyError(it) }
             loading = false
@@ -112,9 +127,17 @@ class ChannelState(val url: String, private val scope: CoroutineScope) {
 }
 
 @Composable
-fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: () -> Unit, onOpen: (VideoItem) -> Unit, onMessage: (String) -> Unit) {
+fun ChannelScreen(
+    state: ChannelState,
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onOpen: (VideoItem) -> Unit,
+    onOpenCollection: (PublicCollection) -> Unit,
+    onMessage: (String) -> Unit,
+) {
     val c = MaterialTheme.colorScheme
     val list = rememberLazyListState()
+    var section by remember(state.url) { mutableStateOf(ChannelSection.Videos) }
     val nearEnd by remember {
         derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 4 }
     }
@@ -177,15 +200,122 @@ fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: ()
                         }
                     }
                 }
-                item(key = "videosTitle") { SectionTitle("Videos") }
-                items(state.videos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
-                if (state.loading || state.hasMore) item {
+                item(key = "tabs") {
+                    Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                        ChannelSection.entries.forEach { tab ->
+                            val active = section == tab
+                            Text(
+                                tab.label,
+                                color = if (active) c.onPrimary else c.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clip(CircleShape).background(if (active) c.primary else c.surfaceContainerHigh)
+                                    .pressable { section = tab }.padding(horizontal = 14.dp, vertical = 9.dp),
+                            )
+                        }
+                    }
+                }
+                when (section) {
+                    ChannelSection.Videos -> {
+                        item(key = "videosTitle") { SectionTitle("Videos") }
+                        items(state.videos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+                    }
+                    ChannelSection.Shorts -> {
+                        item(key = "shortsTitle") { SectionTitle("Shorts") }
+                        items(state.shorts, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+                    }
+                    ChannelSection.Releases -> {
+                        item(key = "releasesTitle") { SectionTitle("Releases") }
+                        items(state.releases, key = { it.url }) { collection -> PublicCollectionRow(collection, onOpenCollection) }
+                    }
+                    ChannelSection.Playlists -> {
+                        item(key = "playlistsTitle") { SectionTitle("Playlists") }
+                        items(state.playlists, key = { it.url }) { collection -> PublicCollectionRow(collection, onOpenCollection) }
+                    }
+                }
+                if (section == ChannelSection.Videos && (state.loading || state.hasMore)) item {
                     Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) {
                         MaterialLoader(color = c.primary, size = 32.dp)
                     }
                 }
+                if (section != ChannelSection.Videos && state.sectionsLoading) item {
+                    Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) { MaterialLoader(color = c.primary, size = 28.dp) }
+                }
             }
         }
     }
+    }
+}
+
+private enum class ChannelSection(val label: String) { Videos("Videos"), Shorts("Shorts"), Releases("Releases"), Playlists("Playlists") }
+
+@Composable
+fun PublicCollectionRow(collection: PublicCollection, onOpen: (PublicCollection) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp).clip(CircleShape)
+            .background(c.surfaceContainerLow).pressable { onOpen(collection) }.padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Thumbnail(collection.thumbnail, Modifier.size(64.dp), radius = 14)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(collection.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(collection.subtitle, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Stable
+class PublicCollectionState(val collection: PublicCollection, private val scope: CoroutineScope) {
+    var details by mutableStateOf<PublicCollectionDetails?>(null)
+        private set
+    var loading by mutableStateOf(true)
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+
+    init { load() }
+    fun load() {
+        loading = true; error = null
+        scope.launch {
+            runCatching { YouTube.publicCollection(collection.url, collection.isAlbum) }
+                .onSuccess { details = it }
+                .onFailure { error = YouTube.friendlyError(it) }
+            loading = false
+        }
+    }
+}
+
+@Composable
+fun PublicCollectionScreen(state: PublicCollectionState, contentPadding: PaddingValues, onBack: () -> Unit, onOpen: (VideoItem) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Box(Modifier.fillMaxSize().background(c.surface)) {
+        CollapsingHeaderLayout(header = {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircleAction(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+                Spacer(Modifier.width(12.dp))
+                Text(state.collection.title, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }) { top ->
+            when {
+                state.loading && state.details == null -> Box(Modifier.fillMaxWidth().padding(top = top + 64.dp), Alignment.Center) { MaterialLoader(c.primary, 36.dp) }
+                state.error != null -> Box(Modifier.padding(top = top)) { EmptyState(Icons.Rounded.CloudOff, "Couldn't load this ${if (state.collection.isAlbum) "album" else "playlist"}", state.error.orEmpty(), action = { PillButton("Try again", state::load) }) }
+                else -> {
+                    val details = state.details ?: return@CollapsingHeaderLayout
+                    LazyColumn(contentPadding = contentPadding.withTop(top)) {
+                        item {
+                            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                Thumbnail(details.collection.thumbnail, Modifier.fillMaxWidth().aspectRatio(1f), radius = 24)
+                                Spacer(Modifier.height(14.dp))
+                                Text(details.collection.title, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 23.sp)
+                                Text(details.collection.subtitle, color = c.onSurfaceVariant, fontSize = 14.sp)
+                                details.description.takeIf { it.isNotBlank() }?.let { Text(it, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp)) }
+                            }
+                        }
+                        items(details.videos, key = { it.id }) { VideoCard(it, onClick = { onOpen(it) }) }
+                    }
+                }
+            }
+        }
     }
 }

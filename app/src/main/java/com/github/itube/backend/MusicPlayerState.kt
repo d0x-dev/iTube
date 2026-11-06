@@ -1,6 +1,8 @@
 package com.github.itube
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -12,11 +14,13 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.core.content.ContextCompat
 import com.github.itube.backend.lyrics.LyricsHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +41,7 @@ object MusicPlayerState : Player.Listener {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var exoPlayer: ExoPlayer? = null
+    private var appContext: Context? = null
     private var progressJob: Job? = null
     private var lyricsJob: Job? = null
     private var loadJob: Job? = null
@@ -87,6 +92,7 @@ object MusicPlayerState : Player.Listener {
     fun init(context: Context) {
         if (exoPlayer != null) return
         val appContext = context.applicationContext
+        this.appContext = appContext
 
         val dataSourceFactory = OkHttpDataSource.Factory(Net.client)
             .setUserAgent(Net.USER_AGENT)
@@ -101,6 +107,21 @@ object MusicPlayerState : Player.Listener {
             }
 
         startProgressLoop()
+    }
+
+    /** The service publishes this same player through MediaSession; it never creates a second player. */
+    fun playerForSession(context: Context): ExoPlayer {
+        init(context)
+        return requireNotNull(exoPlayer)
+    }
+
+    private fun ensureSystemMediaSession() {
+        val context = appContext ?: return
+        ContextCompat.startForegroundService(context, Intent(context, MusicPlaybackService::class.java))
+    }
+
+    private fun stopSystemMediaSession() {
+        appContext?.stopService(Intent(appContext, MusicPlaybackService::class.java))
     }
 
     private fun startProgressLoop() {
@@ -163,8 +184,22 @@ object MusicPlayerState : Player.Listener {
                 }
 
                 exoPlayer?.let { player ->
-                    val mediaItem = MediaItem.fromUri(streamUrl)
+                    val mediaItem = MediaItem.Builder()
+                        .setMediaId(track.id)
+                        .setUri(streamUrl)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(track.title)
+                                .setArtist(track.artists)
+                                .setAlbumTitle(track.album)
+                                .setArtworkUri(track.thumbnailUrl?.let(Uri::parse))
+                                .build()
+                        )
+                        .build()
                     player.setMediaItem(mediaItem)
+                    // Start the foreground MediaSession only after metadata exists, so Android
+                    // can publish a complete notification immediately.
+                    ensureSystemMediaSession()
                     player.prepare()
                     player.playWhenReady = true
                     player.play()
@@ -249,6 +284,7 @@ object MusicPlayerState : Player.Listener {
         lyricsOpen = false
         lyrics = emptyList()
         lyricsLoading = false
+        stopSystemMediaSession()
     }
 
     fun seekTo(posMs: Long) {

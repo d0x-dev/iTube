@@ -14,6 +14,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.Image
+import org.schabi.newpipe.extractor.InfoItem
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
@@ -37,6 +41,8 @@ import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.extractor.stream.VideoStream
 import org.schabi.newpipe.extractor.localization.DateWrapper
 import java.io.IOException
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -58,6 +64,51 @@ data class VideoItem(
     val uploaded: String?,
 )
 
+/** A YouTube search row. Unlike [VideoItem], this also represents channels and playlists. */
+@Immutable
+data class SearchResult(
+    val id: String,
+    val url: String,
+    val type: SearchFilter,
+    val kind: SearchResultKind,
+    val title: String,
+    val subtitle: String,
+    val thumbnail: String?,
+    val video: VideoItem? = null,
+    val isAlbum: Boolean = false,
+)
+
+enum class SearchResultKind { Video, Channel, Collection }
+
+/** Public playlist/album metadata used by search and channel pages. */
+@Immutable
+data class PublicCollection(
+    val url: String,
+    val title: String,
+    val subtitle: String,
+    val thumbnail: String?,
+    val isAlbum: Boolean = false,
+)
+
+@Immutable
+data class PublicCollectionDetails(
+    val collection: PublicCollection,
+    val description: String,
+    val videos: List<VideoItem>,
+)
+
+enum class SearchFilter(val label: String, val contentFilter: String) {
+    All("All", YoutubeSearchQueryHandlerFactory.ALL),
+    Videos("Videos", YoutubeSearchQueryHandlerFactory.VIDEOS),
+    Playlists("Playlists", YoutubeSearchQueryHandlerFactory.PLAYLISTS),
+    Channels("Channels", YoutubeSearchQueryHandlerFactory.CHANNELS),
+    Artists("Artists", YoutubeSearchQueryHandlerFactory.MUSIC_ARTISTS),
+    Albums("Albums", YoutubeSearchQueryHandlerFactory.MUSIC_ALBUMS),
+    // The extractor has no dedicated News filter. ALL is the only server-side query that
+    // keeps news-style streams available instead of silently returning zero rows.
+    News("News", YoutubeSearchQueryHandlerFactory.ALL),
+}
+
 @Immutable
 data class VideoDetails(
     val item: VideoItem,
@@ -78,6 +129,19 @@ data class VideoDetails(
     val storyboards: List<Storyboard> = emptyList(),
     /** Every caption track YouTube has for this video (Captions.kt). */
     val captions: List<CaptionTrack> = emptyList(),
+    /** Every audio track YouTube has for this video (language, dubbed, bitrate). */
+    val audioTracks: List<AudioTrackItem> = emptyList(),
+)
+
+@Immutable
+data class AudioTrackItem(
+    val id: String,
+    val label: String,
+    val language: String? = null,
+    val isOriginal: Boolean = true,
+    val isDubbed: Boolean = false,
+    val bitrate: Int = 0,
+    val format: String = "M4A",
 )
 
 @Immutable
@@ -131,6 +195,9 @@ data class ChannelDetails(
     val subscribers: Long,
     val description: String,
     val videosTab: ListLinkHandler?,
+    val shortsTab: ListLinkHandler?,
+    val playlistsTab: ListLinkHandler?,
+    val albumsTab: ListLinkHandler?,
 )
 
 @Immutable
@@ -175,11 +242,62 @@ object YouTube {
         searchWithFilter(query, YoutubeSearchQueryHandlerFactory.VIDEOS)
     }
 
+    /** Applies the actual YouTube/NewPipe content filter selected in the search sheet. */
+    suspend fun search(query: String, filter: SearchFilter): List<SearchResult> = withContext(Dispatchers.IO) {
+        val handler = service.searchQHFactory.fromQuery(query, listOf(filter.contentFilter), "")
+        SearchInfo.getInfo(service, handler).relatedItems.mapNotNull { it.toSearchResult(filter) }
+    }
+
+    /** Lightweight YouTube completion endpoint used while the user is still typing. */
+    suspend fun suggestions(query: String): List<String> = withContext(Dispatchers.IO) {
+        val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+        val request = okhttp3.Request.Builder()
+            .url("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=$encoded")
+            .header("User-Agent", Net.USER_AGENT)
+            .build()
+        Net.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@withContext emptyList()
+            val root = org.json.JSONArray(response.body?.string().orEmpty())
+            val values = root.optJSONArray(1) ?: return@withContext emptyList()
+            buildList {
+                for (index in 0 until values.length()) {
+                    values.optString(index).trim().takeIf { it.isNotEmpty() }?.let(::add)
+                }
+            }.distinct().take(8)
+        }
+    }
+
     private fun searchWithFilter(query: String, filter: String): List<VideoItem> {
         val handler = service.searchQHFactory.fromQuery(query, listOf(filter), "")
         return SearchInfo.getInfo(service, handler).relatedItems
             .filterIsInstance<StreamInfoItem>()
             .mapNotNull { it.toVideoItem() }
+    }
+
+    private fun InfoItem.toSearchResult(filter: SearchFilter): SearchResult? = when (this) {
+        is StreamInfoItem -> toVideoItem()?.let { video ->
+            SearchResult(video.id, watchUrl(video.id), filter, SearchResultKind.Video, video.title, listOf(video.channel, video.uploaded, video.views.takeIf { it > 0 }?.let { "$it views" }).filterNotNull().joinToString(" · "), video.thumbnail, video)
+        }
+        is ChannelInfoItem -> SearchResult(
+            id = url,
+            url = url,
+            type = filter,
+            kind = SearchResultKind.Channel,
+            title = name,
+            subtitle = listOf("Channel", subscriberCount.takeIf { it > 0 }?.let(::formatCount)?.plus(" subscribers")).filterNotNull().joinToString(" · "),
+            thumbnail = thumbnails.bestUrl(),
+        )
+        is PlaylistInfoItem -> SearchResult(
+            id = url,
+            url = url,
+            type = filter,
+            kind = SearchResultKind.Collection,
+            title = name,
+            subtitle = listOfNotNull(uploaderName?.takeIf { it.isNotBlank() }, streamCount.takeIf { it > 0 }?.let { "$it videos" }, "Playlist").joinToString(" · "),
+            thumbnail = thumbnails.bestUrl(),
+            isAlbum = filter == SearchFilter.Albums,
+        )
+        else -> null
     }
 
     /**
@@ -225,6 +343,30 @@ object YouTube {
                 .filter { !it.content.isNullOrBlank() }
                 .map { CaptionTrack(it.languageTag, it.isAutoGenerated, it.content.replace(Regex("([?&])fmt=[^&]*"), "$1fmt=srv3")) }
                 .distinctBy { it.language to it.auto },
+            audioTracks = info.audioStreams.orEmpty()
+                .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+                .sortedWith(
+                    compareByDescending<AudioStream> { it.audioTrackType == AudioTrackType.ORIGINAL }
+                        .thenBy { it.audioTrackName ?: it.audioLocale?.displayName ?: "" }
+                        .thenByDescending { it.averageBitrate }
+                )
+                .distinctBy { it.audioTrackId ?: "itag:${it.itag}" }
+                .map { stream ->
+                    val name = stream.audioTrackName
+                        ?: stream.audioLocale?.displayName
+                        ?: if (stream.audioTrackType == AudioTrackType.ORIGINAL) "Original" else "Audio"
+                    val dubbed = if (stream.audioTrackType == AudioTrackType.DUBBED) " · Dubbed" else ""
+                    val kbps = if (stream.averageBitrate > 0) " · ${stream.averageBitrate / 1000} kbps" else ""
+                    AudioTrackItem(
+                        id = stream.audioTrackId ?: "itag:${stream.itag}",
+                        label = "$name$dubbed$kbps",
+                        language = stream.audioTrackId ?: stream.audioLocale?.language,
+                        isOriginal = stream.audioTrackType == AudioTrackType.ORIGINAL || stream.audioTrackType == null,
+                        isDubbed = stream.audioTrackType == AudioTrackType.DUBBED,
+                        bitrate = stream.averageBitrate,
+                        format = stream.format?.name ?: "M4A"
+                    )
+                },
         )
     }
 
@@ -232,7 +374,7 @@ object YouTube {
 
     suspend fun channel(url: String): ChannelDetails = withContext(Dispatchers.IO) {
         val info = ChannelInfo.getInfo(service, url)
-        val videosTab = info.tabs.firstOrNull { it.contentFilters.contains(ChannelTabs.VIDEOS) }
+        fun tab(filter: String) = info.tabs.firstOrNull { it.contentFilters.contains(filter) }
         ChannelDetails(
             url = url,
             id = info.id,
@@ -241,7 +383,10 @@ object YouTube {
             banner = info.banners.bestUrl(targetWidth = 1080),
             subscribers = info.subscriberCount,
             description = info.description.orEmpty(),
-            videosTab = videosTab,
+            videosTab = tab(ChannelTabs.VIDEOS),
+            shortsTab = tab(ChannelTabs.SHORTS),
+            playlistsTab = tab(ChannelTabs.PLAYLISTS),
+            albumsTab = tab(ChannelTabs.ALBUMS),
         )
     }
 
@@ -255,6 +400,45 @@ object YouTube {
         return page.copy(videos = page.videos.map {
             it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
         })
+    }
+
+    /** Channel Shorts is a real YouTube tab, not a client-side guess from uploads. */
+    suspend fun channelShorts(channel: ChannelDetails): List<VideoItem> = withContext(Dispatchers.IO) {
+        val tab = channel.shortsTab ?: return@withContext emptyList()
+        ChannelTabInfo.getInfo(service, tab).relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { item ->
+            item.toVideoItem()?.copy(channel = item.uploaderName.orEmpty().ifBlank { channel.name }, avatar = item.uploaderAvatars.bestUrl(targetWidth = 96) ?: channel.avatar, channelUrl = item.uploaderUrl ?: channel.url)
+        }
+    }
+
+    /** Playlists and albums in a channel tab keep their own URLs so they can open as pages. */
+    suspend fun channelCollections(channel: ChannelDetails, albums: Boolean): List<PublicCollection> = withContext(Dispatchers.IO) {
+        val tab = (if (albums) channel.albumsTab else channel.playlistsTab) ?: return@withContext emptyList()
+        ChannelTabInfo.getInfo(service, tab).relatedItems.filterIsInstance<PlaylistInfoItem>().map { item ->
+            PublicCollection(
+                url = item.url,
+                title = item.name,
+                subtitle = listOfNotNull(item.uploaderName?.takeIf { it.isNotBlank() }, item.streamCount.takeIf { it > 0 }?.let { "$it songs" }, if (albums) "Album" else "Playlist").joinToString(" · "),
+                thumbnail = item.thumbnails.bestUrl(),
+                isAlbum = albums,
+            )
+        }
+    }
+
+    /** Loads a public search/channel playlist or album without requiring the signed-in library. */
+    suspend fun publicCollection(url: String, isAlbum: Boolean = false): PublicCollectionDetails = withContext(Dispatchers.IO) {
+        val info = PlaylistInfo.getInfo(service, url)
+        val collection = PublicCollection(
+            url = url,
+            title = info.name,
+            subtitle = listOfNotNull(info.uploaderName?.takeIf { it.isNotBlank() }, info.streamCount.takeIf { it > 0 }?.let { "$it songs" }, if (isAlbum) "Album" else "Playlist").joinToString(" · "),
+            thumbnail = info.thumbnails.bestUrl(),
+            isAlbum = isAlbum,
+        )
+        PublicCollectionDetails(
+            collection = collection,
+            description = info.description?.content.orEmpty(),
+            videos = info.relatedItems.mapNotNull { it.toVideoItem() },
+        )
     }
 
     private fun StreamInfoItem.toVideoItem(): VideoItem? {

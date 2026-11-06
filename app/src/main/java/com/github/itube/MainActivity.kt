@@ -201,8 +201,10 @@ fun AirStreamApp() {
     var accountSheet by remember { mutableStateOf(false) }
     var openPlaylist by remember { mutableStateOf<PlaylistRef?>(null) }
     var openChannel by remember { mutableStateOf<String?>(null) }
+    var openPublicCollection by remember { mutableStateOf<PublicCollection?>(null) }
     // Kept after closing so the page can slide out with its content.
     var channelState by remember { mutableStateOf<ChannelState?>(null) }
+    var publicCollectionState by remember { mutableStateOf<PublicCollectionState?>(null) }
     val playlistFeed = remember(openPlaylist?.id) { openPlaylist?.let { lib.playlistFeed(it.id) } }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     // Shorts: its own feed and players; ‹ (and Back) return to the tab it was opened from.
@@ -299,6 +301,7 @@ fun AirStreamApp() {
     BackHandler(enabled = player.expanded) { player.expanded = false }
     BackHandler(enabled = !player.expanded && tab != Tab.Home && openPlaylist == null) { tab = if (tab == Tab.Shorts) shortsFrom else Tab.Home }
     BackHandler(enabled = !player.expanded && openPlaylist != null) { openPlaylist = null }
+    BackHandler(enabled = !player.expanded && openPublicCollection != null) { openPublicCollection = null }
     BackHandler(enabled = signingIn) { signingIn = false }
     BackHandler(enabled = !player.expanded && openChannel != null) { openChannel = null }
     BackHandler(enabled = tab == Tab.Shorts && shorts.commentsOpen) { shorts.commentsOpen = false }
@@ -370,6 +373,11 @@ fun AirStreamApp() {
         player.expanded = false
         if (channelState?.url != url) channelState = ChannelState(url, scope)
         openChannel = url
+    }
+    fun showPublicCollection(collection: PublicCollection) {
+        player.expanded = false
+        if (publicCollectionState?.collection?.url != collection.url) publicCollectionState = PublicCollectionState(collection, scope)
+        openPublicCollection = collection
     }
     // A channel opened from Shorts sits over the short, which waits paused.
     SideEffect { shorts.cover(tab == Tab.Shorts && openChannel != null) }
@@ -467,6 +475,16 @@ fun AirStreamApp() {
                 Tab.Shorts -> ShortsScreen(shorts, { shortsMorph.value }, overlayBottom = stackBottom + GlassHeight + 16.dp)
                 Tab.Search -> SearchScreen(
                     search, contentPadding, onOpen = { video -> player.setAudioOnly(false); player.open(video) },
+                    onOpenResult = { result ->
+                        when (result.kind) {
+                            SearchResultKind.Video -> result.video?.let { player.setAudioOnly(false); player.open(it) }
+                            SearchResultKind.Channel -> showChannel(result.url)
+                            SearchResultKind.Collection -> showPublicCollection(
+                                PublicCollection(result.url, result.title, result.subtitle, result.thumbnail, result.isAlbum)
+                            )
+                        }
+                    },
+                    onSettings = { accountSheet = true },
                     scrollToTop = scrollToTop[t] ?: 0,
                 )
                 Tab.Library -> LibraryScreen(
@@ -501,8 +519,20 @@ fun AirStreamApp() {
                     ch, contentPadding, onBack = { openChannel = null },
                     // A video from a channel opened in Shorts plays in the app's player: Shorts closes.
                     onOpen = { v -> if (tab == Tab.Shorts) tab = shortsFrom; player.open(v) },
+                    onOpenCollection = ::showPublicCollection,
                     onMessage = { player.actionMessage = it },
                 )
+            }
+        }
+
+        // Public playlists and albums from search/channel pages are separate from the signed-in Library.
+        AnimatedVisibility(
+            visible = openPublicCollection != null,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            publicCollectionState?.let { collection ->
+                PublicCollectionScreen(collection, contentPadding, onBack = { openPublicCollection = null }, onOpen = player::open)
             }
         }
 
