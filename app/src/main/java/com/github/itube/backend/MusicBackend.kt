@@ -22,7 +22,6 @@ object MusicBackend {
     private const val BROWSE_URL = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
     private const val SEARCH_URL = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
     private const val SONG_PARAMS = "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"
-    // Params
     private const val ARTIST_PARAMS = "EgWKAQIgAWoKEAkQBRAKEAMQBA%3D%3D"
     private const val ALBUM_PARAMS = "EgWKAQIYAWoKEAkQBRAKEAMQBA%3D%3D"
     private const val PLAYLIST_PARAMS = "EgWKAQIoAWoKEAkQBRAKEAMQBA%3D%3D"
@@ -627,6 +626,7 @@ object MusicBackend {
         return null
     }
 
+    // Track parser
     private fun parseTrackItem(itemObj: JSONObject): MusicTrack? {
         // Handle musicResponsiveListItemRenderer (common in Trending / charts / search)
         itemObj.optJSONObject("musicResponsiveListItemRenderer")?.let { responsive ->
