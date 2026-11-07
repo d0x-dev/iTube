@@ -221,7 +221,7 @@ fun OnTheGoPanel(
             animationSpec = spring(dampingRatio = 0.85f, stiffness = 500f),
             label = "topRadius",
         )
-        val safeRadius = topRadius
+        val safeRadius = topRadius.coerceAtLeast(0.dp)
         val shape = RoundedCornerShape(topStart = safeRadius, topEnd = safeRadius)
 
         // Column aligned at bottom. Notice: NO DIM BACKGROUND SCRIM at all!
