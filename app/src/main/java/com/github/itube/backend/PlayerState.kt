@@ -25,6 +25,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.github.itube.backend.SafeUnbindContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -73,6 +74,13 @@ class PlayerState(private val scope: CoroutineScope) {
         private set
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
         private set
+
+    var onTheGoAudioMode by mutableStateOf(false)
+    var onTheGoOpen: Boolean
+        get() = sheet == PlayerSheet.OnTheGo
+        set(value) {
+            sheet = if (value) PlayerSheet.OnTheGo else if (sheet == PlayerSheet.OnTheGo) null else sheet
+        }
 
     init {
         // The service's stream recovery has no player event for its outcome: follow its state.
@@ -149,6 +157,9 @@ class PlayerState(private val scope: CoroutineScope) {
     private var loadJob: Job? = null
     /** A video picked before the service connection finished; started on connect. */
     private var pendingStart: VideoItem? = null
+    private var pendingPlaylist: Pair<List<VideoItem>, Int>? = null
+    private var pendingOffline: DownloadedVideo? = null
+    private val offlineVideoIds = mutableSetOf<String>()
 
     // ── Queue ──
     // The player's playlist is always [current, ...queue]: opening a video swaps the
@@ -163,8 +174,95 @@ class PlayerState(private val scope: CoroutineScope) {
         onPlaybackStarted?.invoke()
         if (expand) expanded = true
         if (current?.id == item.id && error == null) return
+        offlineVideoIds.remove(item.id)
         known[item.id] = item
         show(item, startPlayback = true)
+    }
+
+    /** Opens a full playlist queue in order; the selected item starts and the rest follow it. */
+    fun openPlaylist(items: List<VideoItem>, startIndex: Int = 0, expand: Boolean = true) {
+        if (items.isEmpty()) return
+        val start = startIndex.coerceIn(items.indices)
+        val ordered = items.toList()
+        val selected = ordered[start]
+        onPlaybackStarted?.invoke()
+        expanded = expand
+        ordered.forEach { known[it.id] = it }
+        val player = controller
+        if (player == null) {
+            pendingPlaylist = ordered to start
+            show(selected, startPlayback = false)
+            return
+        }
+        swapping = true
+        try {
+            player.setMediaItems(ordered.map(::mediaItemFor), start, 0L)
+            player.prepare()
+            rebuildQueue()
+        } finally {
+            swapping = false
+        }
+        show(selected, startPlayback = false)
+        player.play()
+    }
+
+    /** Opens a file from the Downloads library without asking YouTube for streams or comments. */
+    fun openOffline(download: DownloadedVideo) {
+        onPlaybackStarted?.invoke()
+        expanded = true
+        val item = download.item
+        val player = controller
+        if (player == null) {
+            pendingOffline = download
+            current = item
+            return
+        }
+        loadJob?.cancel()
+        offlineVideoIds += item.id
+        val encodedId = OfflineMedia.mediaId(item.id, download.uri.toUri())
+        known[item.id] = item
+        known[encodedId] = item
+        current = item
+        details = VideoDetails(
+            item = item,
+            description = download.description,
+            likes = -1L,
+            subscribers = 0L,
+            related = emptyList(),
+            playable = true,
+            quality = "Downloaded",
+            qualities = emptyList(),
+        )
+        descriptionFacts = null
+        descriptionFactsRequestedFor = null
+        error = null
+        firstFrameRendered = false
+        videoAspect = 16f / 9f
+        aspectFromFrames = false
+        decodedHeight = null
+        playingFormat = "Downloaded"
+        sheet = null
+        comments.clearFor(item.id)
+        captions.clear()
+        accountState = null
+        loading = true
+        queue = emptyList()
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(encodedId)
+            .setUri(download.uri.toUri())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(item.title)
+                    .setArtist(item.channel)
+                    .setArtworkUri(item.thumbnail?.toUri())
+                    .setDurationMs(item.durationSec.takeIf { it > 0L }?.times(1000L))
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_VIDEO)
+                    .build(),
+            )
+            .build()
+        player.setMediaItem(mediaItem, 0L)
+        player.prepare()
+        player.play()
     }
 
 
@@ -178,6 +276,7 @@ class PlayerState(private val scope: CoroutineScope) {
     /** Fetches exact watch-page figures only when the viewer opens the description panel. */
     fun loadDescriptionFacts() {
         val id = current?.id ?: return
+        if (id in offlineVideoIds) return
         if (descriptionFactsRequestedFor == id) return
         descriptionFactsRequestedFor = id
         scope.launch {
@@ -191,6 +290,7 @@ class PlayerState(private val scope: CoroutineScope) {
         openedAt = android.os.SystemClock.elapsedRealtime()
         Log.i("AirStreamTime", "open ${item.id}")
         if (startPlayback) Net.prewarmMediaConnection()
+        offlineVideoIds.remove(item.id)
         current = item
         details = null
         descriptionFacts = null
@@ -228,6 +328,16 @@ class PlayerState(private val scope: CoroutineScope) {
                     captions.useTracks(d.captions)
                     if (!d.playable) error = "No playable stream was found for this video."
                     else if (startPlayback) startPlayback(d.item)
+                    else {
+                        controller?.let { p ->
+                            if (p.currentMediaItem?.mediaId == d.item.id) {
+                                if (p.playbackState == Player.STATE_IDLE || p.playerError != null) {
+                                    p.prepare()
+                                }
+                                if (p.playWhenReady) p.play()
+                            }
+                        }
+                    }
                 }
                 .onFailure {
                     // Cancelled by the next open (a bot-check wait can last ~40 s): this
@@ -378,17 +488,20 @@ class PlayerState(private val scope: CoroutineScope) {
         queue = (from until player.mediaItemCount).map { i -> itemFor(player.getMediaItemAt(i)) }
     }
 
-    private fun itemFor(media: MediaItem): VideoItem = known[media.mediaId] ?: VideoItem(
-        id = media.mediaId,
-        title = media.mediaMetadata.title?.toString().orEmpty(),
-        channel = media.mediaMetadata.artist?.toString().orEmpty(),
-        channelUrl = null,
-        thumbnail = media.mediaMetadata.artworkUri?.toString(),
-        avatar = null,
-        durationSec = 0,
-        views = -1,
-        uploaded = null,
-    ).also { known[media.mediaId] = it }
+    private fun itemFor(media: MediaItem): VideoItem {
+        val id = OfflineMedia.videoId(media.mediaId) ?: media.mediaId
+        return known[media.mediaId] ?: known[id] ?: VideoItem(
+            id = id,
+            title = media.mediaMetadata.title?.toString().orEmpty(),
+            channel = media.mediaMetadata.artist?.toString().orEmpty(),
+            channelUrl = null,
+            thumbnail = media.mediaMetadata.artworkUri?.toString(),
+            avatar = null,
+            durationSec = 0,
+            views = -1,
+            uploaded = null,
+        ).also { known[media.mediaId] = it }
+    }
 
     /** The player moved on by itself (queue advanced, notification "next"): follow it. */
     private var swapping = false
@@ -398,8 +511,8 @@ class PlayerState(private val scope: CoroutineScope) {
         if (swapping || media.mediaId.isBlank()) return
         // Keep the playlist as [current, ...queue]: finished items fall off the front.
         if (player.currentMediaItemIndex > 0) player.removeMediaItems(0, player.currentMediaItemIndex)
-        if (media.mediaId != current?.id) {
-            val item = itemFor(media)
+        val item = itemFor(media)
+        if (item.id != current?.id) {
             show(item, startPlayback = false)
         }
     }
@@ -425,6 +538,7 @@ class PlayerState(private val scope: CoroutineScope) {
     fun refreshAccountState() {
         val item = current ?: return
         accountState = null
+        if (item.id in offlineVideoIds) return
         if (!Account.signedIn) return
         scope.launch {
             runCatching { InnerTube.videoState(item.id) }
@@ -530,7 +644,11 @@ class PlayerState(private val scope: CoroutineScope) {
 
     fun createPlaylist(video: VideoItem, title: String, privacy: String) {
         scope.launch {
-            runCatching { InnerTube.createPlaylist(title, privacy, video.id) }
+            runCatching {
+                val id = InnerTube.createPlaylist(title, privacy)
+                InnerTube.setInPlaylist(id, video.id, add = true)
+                id
+            }
                 .onSuccess { id ->
                     val made = PlaylistChoice(id, title, contains = true, privacy = privacy)
                     playlistChoices = playlistChoices?.let { list ->
@@ -548,6 +666,7 @@ class PlayerState(private val scope: CoroutineScope) {
      * info at the same position, keeping play/pause as it was.
      */
     fun setQuality(height: Int?) {
+        if (current?.id in offlineVideoIds) return
         QualityPreference.set(height)
         val player = controller ?: return
         val item = details?.item ?: current ?: return
@@ -562,6 +681,10 @@ class PlayerState(private val scope: CoroutineScope) {
     /** Fresh links too: the cached ones may be exactly what YouTube refused. */
     fun retry() {
         val item = current ?: return
+        if (item.id in offlineVideoIds) {
+            DownloadLibrary.find(item.id)?.let(::openOffline)
+            return
+        }
         StreamCache.invalidate(item.id)
         current = null
         show(item, startPlayback = true)
@@ -720,6 +843,12 @@ class PlayerState(private val scope: CoroutineScope) {
         syncFromPlayer()
         applyVideoTrack()
         controller?.videoSize?.let(::takeVideoSize)
+        pendingOffline?.let { pendingOffline = null; openOffline(it); return }
+        pendingPlaylist?.let { (items, index) ->
+            pendingPlaylist = null
+            openPlaylist(items, index)
+            return
+        }
         pendingStart?.let { pendingStart = null; startPlayback(it); return }
         val player = controller ?: return
         if (player.mediaItemCount == 0 && current == null) { restoreSession(player); return }
@@ -849,19 +978,25 @@ fun rememberPlayerState(): PlayerState {
     val scope = rememberCoroutineScope()
     val state = remember { PlayerState(scope) }
     DisposableEffect(context) {
-        val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
+        val safeContext = SafeUnbindContext(context.applicationContext)
+        val token = SessionToken(safeContext, ComponentName(safeContext, PlaybackService::class.java))
+        val future = MediaController.Builder(safeContext, token).buildAsync()
         future.addListener({
             runCatching { future.get() }.getOrNull()?.let { controller ->
                 state.controller = controller
                 controller.addListener(state.listener)
                 state.onConnected()
             }
-        }, ContextCompat.getMainExecutor(context))
+        }, ContextCompat.getMainExecutor(safeContext))
         onDispose {
-            state.controller?.removeListener(state.listener)
-            MediaController.releaseFuture(future)
-            state.controller = null
+            try {
+                state.controller?.removeListener(state.listener)
+                MediaController.releaseFuture(future)
+            } catch (e: Exception) {
+                Log.w("PlayerState", "Failed releasing player controller future", e)
+            } finally {
+                state.controller = null
+            }
         }
     }
     // Position isn't evented; poll it only while something is actually playing.
@@ -874,9 +1009,9 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Speed, Comments, Queue, Captions, Transcript, Description }
+enum class PlayerSheet { Quality, Speed, Comments, Queue, Captions, Transcript, Description, OnTheGo }
 
-/** Comments and the transcript open as a panel inside the player (PlayerScreen), not a sheet. */
-val PlayerSheet?.isPanel: Boolean get() = this == PlayerSheet.Comments || this == PlayerSheet.Transcript || this == PlayerSheet.Description
+/** Comments, description, transcript, and on-the-go open as a panel inside the player (PlayerScreen), not a sheet. */
+val PlayerSheet?.isPanel: Boolean get() = this == PlayerSheet.Comments || this == PlayerSheet.Transcript || this == PlayerSheet.Description || this == PlayerSheet.OnTheGo
 
 private const val TAG = "AirStream"
