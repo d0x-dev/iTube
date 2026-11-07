@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import com.github.itube.ui.components.HomeScreenSkeleton
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.ModernPullToRefreshBox
@@ -47,6 +48,10 @@ class FeedState(
     private val loader: suspend (next: String?) -> FeedPage,
 ) {
     var videos by mutableStateOf<List<VideoItem>>(emptyList())
+        private set
+    var recommendations by mutableStateOf<List<VideoItem>>(emptyList())
+        private set
+    var collections by mutableStateOf<List<PublicCollection>>(emptyList())
         private set
     var loading by mutableStateOf(false)
         private set
@@ -76,7 +81,7 @@ class FeedState(
         job = scope.launch {
             runCatching { if (freshOnRefresh && shown.isNotEmpty()) loadFresh() else loader(null) }
                 .onSuccess {
-                    videos = it.videos; next = it.next; generation++
+                    videos = it.videos; recommendations = it.recommendations; collections = it.collections; next = it.next; generation++
                     if (freshOnRefresh) it.videos.forEach { v -> shown += v.id }
                     it.videos.take(prefetchTop).forEach { v -> StreamCache.prefetch(v.id) }
                 }
@@ -96,11 +101,93 @@ class FeedState(
                     val seen = videos.mapTo(HashSet()) { it.id }
                     val added = page.videos.filter { seen.add(it.id) }
                     videos = videos + added
+                    if (page.recommendations.isNotEmpty()) {
+                        val seenRecommendations = recommendations.mapTo(HashSet()) { it.id }
+                        recommendations = recommendations + page.recommendations.filter { seenRecommendations.add(it.id) }
+                    }
+                    if (page.collections.isNotEmpty()) {
+                        val seenCollections = collections.mapTo(HashSet()) { it.url }
+                        collections = collections + page.collections.filter { seenCollections.add(it.url) }
+                    }
                     if (freshOnRefresh) added.forEach { v -> shown += v.id }
                     next = page.next
                 }
                 .onFailure { error = friendly(it) }
             loading = false
+        }
+    }
+
+    /** Fetch every remaining playlist page before starting Play all / Shuffle. */
+    suspend fun loadAllVideos(): List<VideoItem> {
+        if (loading) job?.join()
+        var token = next
+        if (token == null) return videos
+        loading = true
+        val all = LinkedHashMap<String, VideoItem>().apply { videos.forEach { put(it.id, it) } }
+        val allRecommendations = LinkedHashMap<String, VideoItem>().apply { recommendations.forEach { put(it.id, it) } }
+        try {
+            var pageCount = 0
+            while (token != null && pageCount++ < 100) {
+                val page = loader(token)
+                page.videos.forEach { all.putIfAbsent(it.id, it) }
+                page.recommendations.forEach { allRecommendations.putIfAbsent(it.id, it) }
+                token = page.next
+            }
+            videos = all.values.toList()
+            recommendations = allRecommendations.values.toList()
+            next = token
+            return videos
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            this.error = friendly(error)
+            return videos
+        } finally {
+            loading = false
+        }
+    }
+
+    /** Removes one selected track from the current YouTube playlist, rolling back if the write fails. */
+    fun removePlaylistVideo(playlistId: String, video: VideoItem) {
+        if (videos.none { it.id == video.id }) return
+        val before = videos
+        videos = before.filterNot { it.id == video.id }
+        scope.launch {
+            runCatching {
+                when (playlistId) {
+                    "WL" -> InnerTube.setInWatchLater(video.id, add = false)
+                    "LL" -> InnerTube.setLike(video.id, LikeStatus.None)
+                    else -> InnerTube.setInPlaylist(playlistId, video.id, add = false)
+                }
+            }.onFailure {
+                videos = before
+                error = "Couldn't remove ${video.title} from the playlist."
+            }
+        }
+    }
+
+    /** Adds one selected recommendation into the current YouTube playlist, updating the feed state immediately. */
+    fun addPlaylistVideo(playlistId: String, video: VideoItem, onComplete: ((Boolean) -> Unit)? = null) {
+        if (videos.any { it.id == video.id }) return
+        val beforeVideos = videos
+        val beforeRecs = recommendations
+        videos = beforeVideos + video
+        recommendations = beforeRecs.filterNot { it.id == video.id }
+        scope.launch {
+            runCatching {
+                when (playlistId) {
+                    "WL" -> InnerTube.setInWatchLater(video.id, add = true)
+                    "LL" -> InnerTube.setLike(video.id, LikeStatus.Like)
+                    else -> InnerTube.setInPlaylist(playlistId, video.id, add = true)
+                }
+            }.onSuccess {
+                onComplete?.invoke(true)
+            }.onFailure {
+                videos = beforeVideos
+                recommendations = beforeRecs
+                error = "Couldn't add ${video.title} to the playlist."
+                onComplete?.invoke(false)
+            }
         }
     }
 
@@ -121,13 +208,13 @@ class FeedState(
             pages++
         }
         if (fresh.isEmpty()) return first
-        return FeedPage(fresh.values.toList(), token)
+        return FeedPage(fresh.values.toList(), token, collections = first.collections)
     }
 
     fun reset() {
         job?.cancel()
         shown.clear()
-        videos = emptyList(); next = null; loaded = false; loading = false; error = null
+        videos = emptyList(); recommendations = emptyList(); collections = emptyList(); next = null; loaded = false; loading = false; error = null
     }
 
     private companion object {
@@ -156,6 +243,8 @@ class LibraryData(scope: CoroutineScope) {
     fun loadChannels() = scope.launch { runCatching { InnerTube.channels() }.onSuccess { channels = it } }
     fun loadPlaylists() = scope.launch { runCatching { InnerTube.playlists() }.onSuccess { playlists = it } }
 
+    fun forgetPlaylist(id: String) { playlists = playlists.filterNot { it.id == id } }
+
     fun playlistFeed(id: String) = FeedState(scope) { InnerTube.playlist(id, it) }
 
     fun reset() {
@@ -183,16 +272,22 @@ fun FeedList(
     feed: FeedState,
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
+    videosOverride: List<VideoItem>? = null,
     header: LazyListScope.() -> Unit = {},
     /** Optional content placed after the first normal video, never above it. */
     afterFirstVideo: (LazyListScope.() -> Unit)? = null,
+    /** A repeating 3/4-video rhythm for Home shelves, followed by [afterVideoBatch]. */
+    videoBatchSizes: List<Int>? = null,
+    afterVideoBatch: ((LazyListScope, Int) -> Unit)? = null,
     scrollToTop: Int = 0,
     pullToRefresh: Boolean = true,
     /** Collapsing header height: the refresh spinner appears just below it. */
     indicatorTop: Dp = 0.dp,
+    footer: (LazyListScope.() -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
     val list = rememberScrollToTop(scrollToTop)
+    val displayVideos = videosOverride ?: feed.videos
     // Fresh content always starts at the top (first load and every refresh).
     LaunchedEffect(feed.generation) { list.scrollToItem(0) }
     val nearEnd by remember {
@@ -205,15 +300,29 @@ fun FeedList(
     PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = feed::refresh, topPadding = indicatorTop) {
     LazyColumn(state = list, contentPadding = contentPadding) {
         header()
-        if (afterFirstVideo == null) {
-            items(feed.videos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+        if (afterVideoBatch != null && !videoBatchSizes.isNullOrEmpty()) {
+            var offset = 0
+            var batch = 0
+            while (offset < displayVideos.size) {
+                val limit = videoBatchSizes[batch % videoBatchSizes.size].coerceAtLeast(1)
+                val end = (offset + limit).coerceAtMost(displayVideos.size)
+                val group = displayVideos.subList(offset, end)
+                items(group, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+                offset = end
+                // Keep cadence stable as more pages arrive: don't insert a shelf after an
+                // incomplete tail until its next videos have loaded.
+                if (group.size == limit) afterVideoBatch(this, batch++)
+            }
+        } else if (afterFirstVideo == null) {
+            items(displayVideos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
         } else {
-            feed.videos.firstOrNull()?.let { first ->
+            displayVideos.firstOrNull()?.let { first ->
                 item(key = first.id) { VideoCard(first, onClick = { onOpen(first) }) }
             }
             afterFirstVideo()
-            items(feed.videos.drop(1), key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+            items(displayVideos.drop(1), key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
         }
+        footer?.invoke(this)
         when {
             // No keys on these trailing items: a keyed loader at index 0 makes LazyColumn
             // hold it in view when videos arrive above it, landing at the bottom of the page.
