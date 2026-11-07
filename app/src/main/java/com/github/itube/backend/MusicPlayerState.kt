@@ -20,6 +20,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -55,6 +56,7 @@ object MusicPlayerState : Player.Listener {
     /** True while a new URL is being extracted, before ExoPlayer has a buffering state. */
     private var resolvingStream = false
     private var hasRecorded30sProgress = false
+    private var hasConfirmedCurrentTrack = false
 
     // ── Observable UI States ──
     var currentTrack by mutableStateOf<MusicTrack?>(null)
@@ -104,8 +106,9 @@ object MusicPlayerState : Player.Listener {
         val appContext = context.applicationContext
         this.appContext = appContext
 
-        val dataSourceFactory = OkHttpDataSource.Factory(Net.client)
+        val httpDataSourceFactory = OkHttpDataSource.Factory(Net.client)
             .setUserAgent(Net.USER_AGENT)
+        val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
 
         exoPlayer = ExoPlayer.Builder(appContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
@@ -189,9 +192,14 @@ object MusicPlayerState : Player.Listener {
                     // report a buffering transition while their buffered audio is playing.
                     isLoading = !player.isPlaying && (resolvingStream || player.playbackState == Player.STATE_BUFFERING)
 
+                    if (isPlaying && !hasConfirmedCurrentTrack && positionMs >= 15_000L) {
+                        hasConfirmedCurrentTrack = true
+                        currentTrack?.let { ListeningProfile.onTrackConfirmed(it) }
+                    }
+
                     if (positionMs >= 30_000L && !hasRecorded30sProgress) {
                         hasRecorded30sProgress = true
-                        currentTrack?.let { ListeningProfile.recordTrackCompleted(it) }
+                        currentTrack?.let { ListeningProfile.onTrackCompleted(it) }
                     }
                 }
                 delay(200)
@@ -204,6 +212,7 @@ object MusicPlayerState : Player.Listener {
         expanded = true
         loadJob?.cancel()
         hasRecorded30sProgress = false
+        hasConfirmedCurrentTrack = false
 
         val isLiked = ListeningProfile.isLiked(track.id)
         val resolvedTrack = if (track.liked != isLiked) track.copy(liked = isLiked) else track
@@ -220,7 +229,7 @@ object MusicPlayerState : Player.Listener {
         positionMs = 0L
         durationMs = 0L
         currentTrack = resolvedTrack
-        ListeningProfile.recordTrackStarted(resolvedTrack)
+        ListeningProfile.onTrackPlaybackStarted(resolvedTrack)
         // Match the video player: a MediaController connection lets Media3 publish its own
         // native Android media card when this player reaches a playable state.
         ensureSystemMediaSession()
@@ -275,6 +284,7 @@ object MusicPlayerState : Player.Listener {
                         player.playWhenReady = true
                         player.play()
                         resolvingStream = false
+                        isLoading = false
                     }
                     if (newQueue == null) {
                         scope.launch(Dispatchers.IO) {
@@ -396,7 +406,12 @@ object MusicPlayerState : Player.Listener {
     }
 
     fun togglePlayPause() {
+        val cur = currentTrack
         exoPlayer?.let { player ->
+            if (player.playbackState == Player.STATE_IDLE && cur != null) {
+                play(cur, queue)
+                return
+            }
             if (player.isPlaying) {
                 player.pause()
             } else {
@@ -553,7 +568,7 @@ object MusicPlayerState : Player.Listener {
             isLoading = !playingNow && (resolvingStream || playbackState == Player.STATE_BUFFERING)
         }
         if (playbackState == Player.STATE_ENDED) {
-            currentTrack?.let { ListeningProfile.recordTrackCompleted(it) }
+            currentTrack?.let { ListeningProfile.onTrackCompleted(it) }
             if (repeatMode == Player.REPEAT_MODE_ONE) {
                 seekTo(0L)
                 exoPlayer?.play()
@@ -570,7 +585,6 @@ object MusicPlayerState : Player.Listener {
         if (playing) {
             resolvingStream = false
             isLoading = false
-            currentTrack?.let(ListeningProfile::recordTrackStarted)
         }
     }
 
@@ -586,6 +600,15 @@ object MusicPlayerState : Player.Listener {
 
     override fun onPlayerError(error: PlaybackException) {
         Log.e(TAG, "ExoPlayer error: ${error.message}", error)
+        val cur = currentTrack
+        if (cur != null && MusicCacheManager.isTrackCached(cur.id)) {
+            Log.w(TAG, "Cached file playback failed for ${cur.id}, clearing corrupt cache and retrying online stream")
+            MusicCacheManager.removeTrack(cur.id)
+            scope.launch {
+                play(cur, queue)
+            }
+            return
+        }
         resolvingStream = false
         isLoading = false
         isPlaying = false

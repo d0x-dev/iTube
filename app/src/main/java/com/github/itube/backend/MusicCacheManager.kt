@@ -99,7 +99,7 @@ object MusicCacheManager {
                 var totalBytes = 0L
 
                 if (indexFile.exists()) {
-                    val raw = indexFile.readText()
+                    val raw = SecureStorage.decrypt(indexFile.readText())
                     if (raw.isNotBlank()) {
                         val arr = JSONArray(raw)
                         for (i in 0 until arr.length()) {
@@ -176,7 +176,7 @@ object MusicCacheManager {
                     )
                 }
                 val indexFile = File(cacheDir, INDEX_FILE)
-                indexFile.writeText(arr.toString())
+                indexFile.writeText(SecureStorage.encrypt(arr.toString()))
 
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     totalStorageBytes.longValue = total
@@ -311,6 +311,8 @@ object MusicCacheManager {
         }
         return false
     }
+
+    fun removeTrack(trackId: String): Boolean = removeCachedTrack(trackId)
 
     /**
      * Clears all cached offline songs and frees up storage.
