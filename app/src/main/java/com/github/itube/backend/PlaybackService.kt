@@ -45,11 +45,13 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators.YoutubeProgressiveDashManifestCreator
 import org.schabi.newpipe.extractor.stream.Stream
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.util.concurrent.Executors
 
 /**
@@ -60,7 +62,7 @@ import java.util.concurrent.Executors
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null
-    private val resolver = MoreExecutors.listeningDecorator(Executors.newFixedThreadPool(2))
+    private val resolver = MoreExecutors.listeningDecorator(Executors.newFixedThreadPool(4))
 
     override fun onCreate() {
         super.onCreate()
@@ -175,24 +177,30 @@ class PlaybackService : MediaSessionService() {
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> = resolver.submit<MutableList<MediaItem>> {
-            mediaItems.map { item ->
-                // An opened video is already loaded (the player waited for it); this resolves
-                // restored and queued items, which nobody is waiting for yet.
-                val info = BotCheck.withoutWaiting(item.mediaId) { StreamCache.getOrLoad(item.mediaId) }
-                item.buildUpon()
-                    .setUri(YouTube.watchUrl(item.mediaId))
-                    .setMediaMetadata(
-                        item.mediaMetadata.buildUpon()
-                            .setTitle(item.mediaMetadata.title ?: info.name)
-                            .setArtist(item.mediaMetadata.artist ?: info.uploaderName)
-                            // Kept with the saved session, so a restored queue shows lengths.
-                            .setDurationMs(item.mediaMetadata.durationMs ?: info.duration.takeIf { it > 0 }?.times(1000))
-                            .setMediaType(MediaMetadata.MEDIA_TYPE_VIDEO)
-                            .build(),
-                    )
-                    .build()
+        ): ListenableFuture<MutableList<MediaItem>> {
+            // Instant resolution: immediately return all items without blocking on network extractions.
+            // Items are prepared on demand by StreamRecoverer as playback reaches them.
+            val resolved = mediaItems.map { item ->
+                if (OfflineMedia.isOffline(item.mediaId)) {
+                    val fileUri = OfflineMedia.uri(item.mediaId)
+                        ?: throw IOException("This offline download no longer has a readable file URI")
+                    item.buildUpon().setUri(fileUri).build()
+                } else {
+                    val cached = StreamCache.get(item.mediaId)
+                    val metadata = item.mediaMetadata.buildUpon()
+                    if (cached != null) {
+                        metadata.setTitle(item.mediaMetadata.title ?: cached.name)
+                            .setArtist(item.mediaMetadata.artist ?: cached.uploaderName)
+                            .setDurationMs(item.mediaMetadata.durationMs ?: cached.duration.takeIf { it > 0 }?.times(1000))
+                    }
+                    metadata.setMediaType(MediaMetadata.MEDIA_TYPE_VIDEO)
+                    item.buildUpon()
+                        .setUri(YouTube.watchUrl(item.mediaId))
+                        .setMediaMetadata(metadata.build())
+                        .build()
+                }
             }.toMutableList()
+            return Futures.immediateFuture(resolved)
         }
     }
 }
@@ -209,11 +217,10 @@ object StreamRecovery {
 }
 
 /**
- * YouTube refuses a stream URL (HTTP 403) once it expires or the phone's address changes —
- * mobile data does that mid-video without the default network changing. Fetches fresh
- * links and resumes at the same spot; in the service, so background audio recovers too.
- * Again only after [PROGRESS_MS] more of the video: a stream refused twice at the same
- * spot is really refused, and the error stands.
+ * Ensures streams are extracted and kept fresh across the entire playback queue.
+ * Uncached items (e.g. from mixes or playlists) are resolved seamlessly upon transition,
+ * the next item is prewarmed in the background, and playback errors (expired URLs, 403, etc.)
+ * are recovered automatically at the exact second.
  */
 @OptIn(UnstableApi::class)
 private class StreamRecoverer(
@@ -224,39 +231,75 @@ private class StreamRecoverer(
     private val main = Handler(Looper.getMainLooper())
     private var lastId: String? = null
     private var lastPositionMs = 0L
+    private var resolvingId: String? = null
+
+    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        if (mediaItem == null) return
+        val id = mediaItem.mediaId
+        if (id.isBlank() || OfflineMedia.isOffline(id)) return
+        if (StreamCache.get(id) == null) {
+            resolveAndResume(mediaItem, positionMs = 0L)
+        } else {
+            prewarmNext()
+        }
+    }
+
     override fun onPlayerError(error: PlaybackException) {
-        if (error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) return
         val item = player.currentMediaItem ?: return
         val id = item.mediaId
-        val position = player.currentPosition
-        if (id == lastId && position < lastPositionMs + PROGRESS_MS) {
+        if (id.isBlank() || OfflineMedia.isOffline(id)) return
+        val position = player.currentPosition.coerceAtLeast(0L)
+        if (id == lastId && position < lastPositionMs + PROGRESS_MS && error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) {
             Log.w("AirStream", "stream refused again for $id at ${position / 1000}s; giving up")
             return
         }
         lastId = id
         lastPositionMs = position
-        Log.i("AirStream", "stream refused for $id; re-extracting and resuming at ${position / 1000}s")
+        Log.i("AirStream", "player error (${error.errorCodeName}/${error.errorCode}) for $id at ${position / 1000}s; resolving and resuming")
+        StreamCache.invalidate(id)
+        resolveAndResume(item, position)
+    }
+
+    private fun resolveAndResume(item: MediaItem, positionMs: Long) {
+        val id = item.mediaId
+        if (resolvingId == id) return
+        resolvingId = id
         StreamRecovery.failed = null
         StreamRecovery.recovering = id
-        StreamCache.invalidate(id)
         resolver.execute {
             val result = runCatching { BotCheck.retryingBlocking(id) { StreamCache.getOrLoad(id) } }
             main.post {
+                resolvingId = null
                 StreamRecovery.recovering = null
-                // The user moved on (another video, Try again) while the links loaded.
-                if (player.currentMediaItem?.mediaId != id || player.playerError == null) return@post
+                if (player.currentMediaItem?.mediaId != id) return@post
                 result
-                    .onSuccess { resume(item, position) }
+                    .onSuccess {
+                        resume(item, positionMs)
+                        prewarmNext()
+                    }
                     .onFailure {
-                        Log.w("AirStream", "re-extracting $id failed", it)
+                        Log.w("AirStream", "resolving $id failed", it)
                         StreamRecovery.failed = id to YouTube.friendlyError(it)
                     }
             }
         }
     }
 
+    private fun prewarmNext() {
+        val nextIndex = player.currentMediaItemIndex + 1
+        if (nextIndex < player.mediaItemCount) {
+            val nextItem = player.getMediaItemAt(nextIndex)
+            val nextId = nextItem.mediaId
+            if (nextId.isNotBlank() && !OfflineMedia.isOffline(nextId) && StreamCache.get(nextId) == null) {
+                resolver.execute {
+                    runCatching { BotCheck.withoutWaiting(nextId) { StreamCache.getOrLoad(nextId) } }
+                }
+            }
+        }
+    }
+
     /**
-     * A fresh source for the same item: added behind the refused one, which is then dropped
+     * A fresh source for the same item: added behind the current one, which is then dropped
      * so the new one takes its index (no transient jump the UI's queue trimming could see).
      */
     private fun resume(item: MediaItem, positionMs: Long) {
@@ -265,6 +308,9 @@ private class StreamRecoverer(
         player.removeMediaItem(index)
         player.seekTo(index, positionMs)
         player.prepare()
+        if (player.playWhenReady) {
+            player.play()
+        }
     }
 
     private companion object {
