@@ -62,7 +62,11 @@ data class VideoItem(
     val durationSec: Long = 0L,
     val views: Long = 0L,
     val uploaded: String? = null,
-)
+    val isShort: Boolean = false,
+) {
+    val isShortVideo: Boolean
+        get() = isShort || (durationSec in 1..60)
+}
 
 /** A YouTube search row. Unlike [VideoItem], this also represents channels and playlists. */
 @Immutable
@@ -95,6 +99,7 @@ data class PublicCollectionDetails(
     val collection: PublicCollection,
     val description: String,
     val videos: List<VideoItem>,
+    val recommendations: List<VideoItem> = emptyList(),
 )
 
 enum class SearchFilter(val label: String, val contentFilter: String) {
