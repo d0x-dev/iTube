@@ -1432,6 +1432,42 @@ class SearchState(private val scope: CoroutineScope) {
     }
 }
 
+private sealed interface SearchDisplayItem {
+    data class Normal(val result: SearchResult) : SearchDisplayItem
+    data class ShortsShelf(val key: String, val shorts: List<VideoItem>) : SearchDisplayItem
+}
+
+private fun groupSearchResults(results: List<SearchResult>): List<SearchDisplayItem> {
+    if (results.isEmpty()) return emptyList()
+    val displayItems = ArrayList<SearchDisplayItem>()
+    val currentShorts = ArrayList<VideoItem>()
+    var shelfCounter = 0
+
+    fun flush() {
+        if (currentShorts.isNotEmpty()) {
+            displayItems.add(
+                SearchDisplayItem.ShortsShelf(
+                    key = "shorts_shelf_${shelfCounter++}_${currentShorts.first().id}",
+                    shorts = ArrayList(currentShorts)
+                )
+            )
+            currentShorts.clear()
+        }
+    }
+
+    for (res in results) {
+        val video = res.video
+        if (video != null && video.isShortVideo) {
+            currentShorts.add(video)
+        } else {
+            flush()
+            displayItems.add(SearchDisplayItem.Normal(res))
+        }
+    }
+    flush()
+    return displayItems
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
@@ -1680,9 +1716,21 @@ fun SearchScreen(
                         else -> {
                             val list = rememberScrollToTop(scrollToTop)
                             LaunchedEffect(state.generation) { list.scrollToItem(0) }
+                            val displayItems = remember(state.results) { groupSearchResults(state.results) }
                             LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
-                                items(state.results, key = { it.id }) { result ->
-                                    SearchResultCard(result, onOpen, onOpenShort, onOpenResult)
+                                items(
+                                    items = displayItems,
+                                    key = { item ->
+                                        when (item) {
+                                            is SearchDisplayItem.Normal -> item.result.id
+                                            is SearchDisplayItem.ShortsShelf -> item.key
+                                        }
+                                    }
+                                ) { item ->
+                                    when (item) {
+                                        is SearchDisplayItem.Normal -> SearchResultCard(item.result, onOpen, onOpenShort, onOpenResult)
+                                        is SearchDisplayItem.ShortsShelf -> SearchShortsShelf(item.shorts, onOpenShort)
+                                    }
                                 }
                             }
                         }
@@ -1896,7 +1944,7 @@ private fun SearchResultCard(
 ) {
     result.video?.let { video ->
         if (video.isShortVideo) {
-            SearchShortCard(video = video, onClick = { onOpenShort(video) })
+            SearchShortsShelf(shorts = listOf(video), onOpenShort = onOpenShort)
         } else {
             VideoCard(video = video, onClick = { onOpen(video) })
         }
@@ -2043,82 +2091,55 @@ private fun SearchResultCard(
 }
 
 @Composable
-fun SearchShortCard(video: VideoItem, onClick: () -> Unit) {
-    val c = MaterialTheme.colorScheme
+fun SearchShortsShelf(shorts: List<VideoItem>, onOpenShort: (VideoItem) -> Unit) {
+    if (shorts.isEmpty()) return
     val menu = LocalVideoMenu.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(c.surfaceContainerLow)
-            .prefetchOnPress(video.id)
-            .pressable(pressedScale = 0.98f, onLongClick = { menu(video) }, onClick = onClick)
-            .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Vertical 9:16 thumbnail
-        Box(
-            modifier = Modifier
-                .width(100.dp)
-                .aspectRatio(9f / 16f)
-                .clip(RoundedCornerShape(14.dp))
+    Column(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Thumbnail(video.thumbnail, Modifier.fillMaxSize(), radius = 0)
-            // Shorts badge pill overlay
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color.Red)
-                    .padding(horizontal = 5.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = "SHORT",
-                    color = Color.White,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.5.sp
-                )
-            }
-            if (video.durationSec in 1..60) {
-                DurationPill(video.durationSec, Modifier.align(Alignment.BottomEnd).padding(4.dp), small = true)
-            }
+            Text("i", color = Color(0xFFFF0000), fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+            Text("Shorts", fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
         }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = video.title,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                lineHeight = 20.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                color = c.onSurface,
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ChannelAvatar(video.avatar, video.channel, size = 20)
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = video.channel,
-                    color = c.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (video.views > 0 || !video.uploaded.isNullOrBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = listOfNotNull(
-                        video.views.takeIf { it > 0 }?.let { "${formatCount(it)} views" },
-                        video.uploaded
-                    ).joinToString(" • "),
-                    color = c.onSurfaceVariant.copy(alpha = 0.8f),
-                    fontSize = 12.sp,
-                )
+        shorts.chunked(2).forEach { rowShorts ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                rowShorts.forEach { short ->
+                    Box(
+                        Modifier.weight(1f)
+                            .prefetchOnPress(short.id)
+                            .pressable(pressedScale = 0.98f, onLongClick = { menu(short) }, onClick = { onOpenShort(short) })
+                            .clip(RoundedCornerShape(16.dp)),
+                    ) {
+                        Thumbnail(short.thumbnail, Modifier.fillMaxWidth().aspectRatio(0.68f), radius = 0)
+                        Box(
+                            Modifier.fillMaxSize().background(
+                                Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f)),
+                            ),
+                        )
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            contentDescription = "Short options",
+                            tint = Color.White,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(19.dp)
+                                .clickable { menu(short) },
+                        )
+                        Text(
+                            short.title,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            lineHeight = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 10.dp, vertical = 11.dp),
+                        )
+                    }
+                }
+                if (rowShorts.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
