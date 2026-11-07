@@ -32,8 +32,22 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
+import com.github.itube.MusicCacheManager
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.Arrangement
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
@@ -201,7 +215,7 @@ fun AccountSheet(onSignIn: () -> Unit, onSignedOut: () -> Unit, onDismiss: () ->
     }
 }
 
-private enum class SettingsDetail { Appearance, Captions, SponsorBlock, Player, Shorts, PopupEffects, About }
+private enum class SettingsDetail { Appearance, Captions, SponsorBlock, Player, Shorts, PopupEffects, Storage, About }
 
 @Composable
 private fun AccountSettingsHome(
@@ -245,7 +259,21 @@ private fun AccountSettingsHome(
         SettingsEntry(R.drawable.settings_player, "Player controls", "Video control preferences") { onOpen(SettingsDetail.Player) }
         SettingsEntry(R.drawable.settings_shorts, "Shorts", "Shorts feed preferences") { onOpen(SettingsDetail.Shorts) }
         SettingsEntry(R.drawable.settings_effects, "Popup effects", "Frosted popup appearance") { onOpen(SettingsDetail.PopupEffects) }
+        SettingsEntry(Icons.Rounded.Storage, "Storage & music cache", "Cached songs, offline audio and storage limits") { onOpen(SettingsDetail.Storage) }
         SettingsEntry(R.drawable.settings_info, "About iTube", "App information, developers and updates") { onOpen(SettingsDetail.About) }
+    }
+}
+
+@Composable
+private fun SettingsEntry(iconVector: androidx.compose.ui.graphics.vector.ImageVector, title: String, summary: String, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().pressable(onClick = onClick).padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(iconVector, null, tint = c.onSurface, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(summary, color = c.onSurfaceVariant, fontSize = 13.sp)
+        }
     }
 }
 
@@ -280,6 +308,7 @@ private fun SettingsDetailContent(detail: SettingsDetail, onBack: () -> Unit) {
                 SettingsDetail.Player -> PlayerControlsSettings()
                 SettingsDetail.Shorts -> ShortsSettings()
                 SettingsDetail.PopupEffects -> BlurSettings()
+                SettingsDetail.Storage -> StorageSettingsContent()
                 SettingsDetail.About -> AboutITubeV2()
             }
         }
@@ -589,5 +618,298 @@ private val SettingsDetail.title: String
         SettingsDetail.Player -> "Player controls"
         SettingsDetail.Shorts -> "Shorts"
         SettingsDetail.PopupEffects -> "Popup effects"
+        SettingsDetail.Storage -> "Storage & cache"
         SettingsDetail.About -> "About iTube"
     }
+
+@Composable
+private fun StorageSettingsContent() {
+    val context = LocalContext.current
+    val c = MaterialTheme.colorScheme
+    val totalBytes = MusicCacheManager.totalStorageBytes.longValue
+    val cachedCount = MusicCacheManager.cachedTracks.size
+    val cachingEnabled = MusicCacheManager.cachingEnabled.value
+    val maxLimitMB = MusicCacheManager.maxCacheLimitMB.longValue
+
+    var showLimitDialog by remember { mutableStateOf(false) }
+    var showClearDialog by remember { mutableStateOf(false) }
+
+    val limitOptions = listOf(
+        500L to "500 MB",
+        1024L to "1 GB",
+        2048L to "2 GB (Default)",
+        5120L to "5 GB",
+        10240L to "10 GB",
+        -1L to "Unlimited"
+    )
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // ── Storage Usage Meter Card ──
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(c.surfaceContainerHigh)
+                .padding(20.dp)
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(c.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Rounded.Storage,
+                            contentDescription = null,
+                            tint = c.onPrimaryContainer,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Text(
+                            text = MusicCacheManager.formatStorageSize(totalBytes),
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 24.sp,
+                            color = c.onSurface
+                        )
+                        Text(
+                            text = "$cachedCount songs cached offline",
+                            fontSize = 13.sp,
+                            color = c.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Progress Bar
+                if (maxLimitMB > 0) {
+                    val maxBytes = maxLimitMB * 1024L * 1024L
+                    val fraction = (totalBytes.toFloat() / maxBytes.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = if (fraction > 0.85f) c.error else c.primary,
+                        trackColor = c.surfaceContainerHighest
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${(fraction * 100).toInt()}% of limit used",
+                            fontSize = 11.sp,
+                            color = c.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Limit: ${if (maxLimitMB >= 1024) "${maxLimitMB / 1024} GB" else "${maxLimitMB} MB"}",
+                            fontSize = 11.sp,
+                            color = c.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LinearProgressIndicator(
+                        progress = { 0.1f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = c.primary,
+                        trackColor = c.surfaceContainerHighest
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Unlimited storage enabled",
+                        fontSize = 11.sp,
+                        color = c.onSurfaceVariant
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Audio only: Video streams are never cached to protect device memory.",
+                    fontSize = 11.sp,
+                    color = c.onSurfaceVariant.copy(alpha = 0.8f),
+                    lineHeight = 16.sp
+                )
+            }
+        }
+
+        // ── Toggle: Cache songs while playing ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(c.surfaceContainerLow)
+                .pressable { MusicCacheManager.setCachingEnabled(!cachingEnabled) }
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Cache songs while playing",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = c.onSurface
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = "Automatically save songs to offline storage as you listen so they play offline next time",
+                    fontSize = 12.sp,
+                    color = c.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = cachingEnabled,
+                onCheckedChange = { MusicCacheManager.setCachingEnabled(it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = c.primary,
+                    checkedTrackColor = c.primaryContainer
+                )
+            )
+        }
+
+        // ── Setting: Storage Limit ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(c.surfaceContainerLow)
+                .pressable { showLimitDialog = true }
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Storage limit",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = c.onSurface
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = if (maxLimitMB <= 0) "Unlimited storage" else "Maximum $maxLimitMB MB (auto-evicts oldest songs)",
+                    fontSize = 12.sp,
+                    color = c.onSurfaceVariant
+                )
+            }
+            Text(
+                text = if (maxLimitMB <= 0) "Unlimited" else if (maxLimitMB >= 1024) "${maxLimitMB / 1024} GB" else "$maxLimitMB MB",
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                color = c.primary
+            )
+        }
+
+        // ── Button: Clear All Cached Music ──
+        if (cachedCount > 0) {
+            Button(
+                onClick = { showClearDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = c.errorContainer,
+                    contentColor = c.onErrorContainer
+                )
+            ) {
+                Icon(Icons.Rounded.DeleteSweep, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Clear cached songs (${MusicCacheManager.formatStorageSize(totalBytes)})",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+
+    // Limit Selection Dialog
+    if (showLimitDialog) {
+        AlertDialog(
+            onDismissRequest = { showLimitDialog = false },
+            title = {
+                Text("Select storage limit", fontFamily = RoundedHeavy, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    limitOptions.forEach { (mb, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pressable {
+                                    MusicCacheManager.setMaxCacheLimitMB(mb)
+                                    showLimitDialog = false
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = maxLimitMB == mb,
+                                onClick = {
+                                    MusicCacheManager.setMaxCacheLimitMB(mb)
+                                    showLimitDialog = false
+                                }
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = label,
+                                fontSize = 15.sp,
+                                fontWeight = if (maxLimitMB == mb) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLimitDialog = false }) { Text("Close") }
+            }
+        )
+    }
+
+    // Clear Confirmation Dialog
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = {
+                Text("Clear cached songs?", fontFamily = RoundedHeavy, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text("Are you sure you want to delete all cached songs? This will free up ${MusicCacheManager.formatStorageSize(totalBytes)} of device storage.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        MusicCacheManager.clearAllCache()
+                        showClearDialog = false
+                        Toast.makeText(context, "Cached music cleared", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = c.error,
+                        contentColor = c.onError
+                    )
+                ) {
+                    Text("Clear All", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
