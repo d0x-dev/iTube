@@ -77,7 +77,7 @@ object MusicBackend {
 
         // Fetch YouTube Music's Charts (top real artists with circular photos)
         try {
-            val chartsJson = postInnerTube("FEmusic_charts") // fetch charts
+            val chartsJson = postInnerTube("FEmusic_charts")
             parseShelves(chartsJson, sections, quickPicks, communityPlaylists, chartTopArtists, newReleases, topAlbums)
         } catch (e: Exception) {
             Log.w(TAG, "Error fetching FEmusic_charts: ${e.message}")
@@ -192,6 +192,7 @@ object MusicBackend {
      * When [channelId] is NOT a valid YTM browse ID (UC* or MPLA*), it's treated as an artist
      * name and we search for the real channel ID first, then browse it.
      */
+    // Details
     suspend fun fetchArtistDetails(channelId: String): ArtistDetails? = withContext(Dispatchers.IO) {
         try {
             // Resolve real browseId if channelId looks like a name rather than a YTM ID
