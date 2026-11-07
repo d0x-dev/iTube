@@ -102,6 +102,37 @@ object MusicPlayerState : Player.Listener {
     var queueOpen by mutableStateOf(false)
     var lyricsOpen by mutableStateOf(false)
 
+    // Video Mode & Companion Video Player
+    var isVideoMode by mutableStateOf(false)
+    var isVideoFullscreen by mutableStateOf(false)
+    var selectedVideoQuality by mutableStateOf<Int?>(480)
+    var companionVideoPlayer: ExoPlayer? = null
+        private set
+
+    fun getOrCreateVideoPlayer(context: Context): ExoPlayer {
+        if (companionVideoPlayer == null) {
+            val appCtx = context.applicationContext
+            val httpDataSourceFactory = OkHttpDataSource.Factory(Net.client)
+                .setUserAgent(Net.USER_AGENT)
+            val dataSourceFactory = DefaultDataSource.Factory(appCtx, httpDataSourceFactory)
+            companionVideoPlayer = ExoPlayer.Builder(appCtx)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                .setLooper(Looper.getMainLooper())
+                .build().apply {
+                    volume = 0f
+                    repeatMode = Player.REPEAT_MODE_OFF
+                }
+        }
+        return companionVideoPlayer!!
+    }
+
+    fun releaseVideoPlayer() {
+        companionVideoPlayer?.release()
+        companionVideoPlayer = null
+        isVideoMode = false
+        isVideoFullscreen = false
+    }
+
     var lyrics by mutableStateOf<List<LyricsLine>>(emptyList())
         private set
 
@@ -403,6 +434,7 @@ object MusicPlayerState : Player.Listener {
             }
             isPlaying = player.isPlaying
         }
+        companionVideoPlayer?.pause()
     }
 
     fun resume() {
@@ -413,6 +445,9 @@ object MusicPlayerState : Player.Listener {
                 player.play()
             }
             isPlaying = player.isPlaying
+        }
+        if (isVideoMode) {
+            companionVideoPlayer?.play()
         }
     }
 
@@ -425,10 +460,14 @@ object MusicPlayerState : Player.Listener {
             }
             if (player.isPlaying) {
                 player.pause()
+                companionVideoPlayer?.pause()
             } else {
                 onPlaybackStarted?.invoke()
                 pauseVideoPlayerIfPlaying()
                 player.play()
+                if (isVideoMode) {
+                    companionVideoPlayer?.play()
+                }
             }
             isPlaying = player.isPlaying
         }
@@ -440,6 +479,10 @@ object MusicPlayerState : Player.Listener {
         exoPlayer?.let { player ->
             player.stop()
             player.clearMediaItems()
+        }
+        companionVideoPlayer?.let { vp ->
+            vp.stop()
+            vp.clearMediaItems()
         }
         currentTrack = null
         queue.clear()
@@ -454,12 +497,17 @@ object MusicPlayerState : Player.Listener {
         lyricsOpen = false
         lyrics = emptyList()
         lyricsLoading = false
+        isVideoMode = false
+        isVideoFullscreen = false
         stopSystemMediaSession()
     }
 
     fun seekTo(posMs: Long) {
         positionMs = posMs
         exoPlayer?.seekTo(posMs)
+        if (isVideoMode) {
+            companionVideoPlayer?.seekTo(posMs)
+        }
     }
 
     fun skipNext() {
@@ -535,6 +583,7 @@ object MusicPlayerState : Player.Listener {
         playbackSpeed = speed
         if (!holdingFast) {
             exoPlayer?.setPlaybackSpeed(speed)
+            companionVideoPlayer?.setPlaybackSpeed(speed)
         }
     }
 
@@ -549,6 +598,10 @@ object MusicPlayerState : Player.Listener {
             player.playWhenReady = true
             player.play()
         }
+        if (isVideoMode) {
+            companionVideoPlayer?.setPlaybackSpeed(2f)
+            companionVideoPlayer?.play()
+        }
         return true
     }
 
@@ -559,6 +612,12 @@ object MusicPlayerState : Player.Listener {
         player.setPlaybackSpeed(preHoldSpeed)
         if (!preHoldPlaying) {
             player.pause()
+        }
+        if (isVideoMode) {
+            companionVideoPlayer?.setPlaybackSpeed(preHoldSpeed)
+            if (!preHoldPlaying) {
+                companionVideoPlayer?.pause()
+            }
         }
     }
 

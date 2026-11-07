@@ -24,6 +24,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.Image
 import com.github.itube.FastHoldPill
+import com.github.itube.aspectFit
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
@@ -84,6 +86,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -153,31 +157,48 @@ fun IosStyledPlayer(
     val scope = rememberCoroutineScope()
     val view = LocalView.current
 
-    // Video Mode States
-    var isVideoMode by remember { mutableStateOf(false) }
-    var isVideoFullscreen by remember { mutableStateOf(false) }
+    // Video Mode States (Persisted across collapse in MusicPlayerState)
+    val isVideoMode = MusicPlayerState.isVideoMode
+    val isVideoFullscreen = MusicPlayerState.isVideoFullscreen
     var isVideoLoading by remember { mutableStateOf(false) }
     var availableQualities by remember { mutableStateOf<List<VideoQualityOption>>(emptyList()) }
     var selectedQuality by remember { mutableStateOf<VideoQualityOption?>(null) }
     var showQualitySheet by remember { mutableStateOf(false) }
+    var currentVideoTrackId by remember { mutableStateOf<String?>(null) }
+    var loadedQualityHeight by remember { mutableIntStateOf(0) }
 
-    val videoPlayer = remember(context) {
-        ExoPlayer.Builder(context).build().apply {
-            volume = 0f // Mute! Audio is handled by MusicPlayerState
-            repeatMode = Player.REPEAT_MODE_OFF
-        }
-    }
+    // Companion Video Player (Owned by MusicPlayerState, retained when collapsed)
+    val videoPlayer = remember(context) { MusicPlayerState.getOrCreateVideoPlayer(context) }
 
+    // Video aspect ratio tracking for pixel-perfect zoom-to-fill (no stretching!)
+    var videoAspect by remember { mutableFloatStateOf(16f / 9f) }
     DisposableEffect(videoPlayer) {
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoAspect = videoSize.width.toFloat() / videoSize.height.toFloat()
+                }
+            }
+        }
+        videoPlayer.addListener(listener)
+        val sz = videoPlayer.videoSize
+        if (sz.width > 0 && sz.height > 0) {
+            videoAspect = sz.width.toFloat() / sz.height.toFloat()
+        }
         onDispose {
-            videoPlayer.release()
+            videoPlayer.removeListener(listener)
         }
     }
 
     // Load video stream when video mode is active, or track changes, or quality changes
-    LaunchedEffect(track.id, isVideoMode, selectedQuality) {
+    LaunchedEffect(track.id, isVideoMode, MusicPlayerState.selectedVideoQuality) {
         if (!isVideoMode) {
             videoPlayer.pause()
+            return@LaunchedEffect
+        }
+        val targetHeight = MusicPlayerState.selectedVideoQuality ?: 480
+        if (currentVideoTrackId == track.id && loadedQualityHeight == targetHeight && videoPlayer.playbackState != androidx.media3.common.Player.STATE_IDLE) {
+            if (MusicPlayerState.isPlaying) videoPlayer.play()
             return@LaunchedEffect
         }
         isVideoLoading = true
@@ -185,7 +206,13 @@ fun IosStyledPlayer(
             val info = withContext(Dispatchers.IO) {
                 StreamCache.get(track.id) ?: StreamCache.getOrLoad(track.id)
             }
-            val allVideoStreams = (info.videoOnlyStreams + info.videoStreams)
+            // Prefer progressive MP4s for ultra-fast, smooth playback without decoder lag
+            val progressive = info.videoStreams
+                .filter { it.isUrl && it.height > 0 }
+                .distinctBy { it.height }
+                .sortedByDescending { it.height }
+
+            val allVideoStreams = (progressive + info.videoOnlyStreams)
                 .filter { it.isUrl && it.height > 0 }
                 .distinctBy { it.height }
                 .sortedByDescending { it.height }
@@ -195,15 +222,17 @@ fun IosStyledPlayer(
             }
             availableQualities = qualityOptions
 
-            val chosenStream = if (selectedQuality != null) {
-                qualityOptions.firstOrNull { it.height == selectedQuality!!.height } ?: qualityOptions.firstOrNull()
-            } else {
-                qualityOptions.firstOrNull { it.height == 720 }
-                    ?: qualityOptions.firstOrNull { it.height <= 1080 }
-                    ?: qualityOptions.firstOrNull()
-            }
+            // Default to 480p or 360p as requested: smooth playback in square box with zero lag
+            val chosenStream = qualityOptions.firstOrNull { it.height == targetHeight }
+                ?: qualityOptions.firstOrNull { it.height <= targetHeight }
+                ?: qualityOptions.firstOrNull { it.height == 480 }
+                ?: qualityOptions.firstOrNull { it.height == 360 }
+                ?: qualityOptions.firstOrNull()
 
             if (chosenStream != null) {
+                currentVideoTrackId = track.id
+                loadedQualityHeight = chosenStream.height
+                selectedQuality = chosenStream
                 val mediaItem = MediaItem.fromUri(chosenStream.url)
                 videoPlayer.setMediaItem(mediaItem)
                 videoPlayer.prepare()
@@ -233,21 +262,21 @@ fun IosStyledPlayer(
         }
     }
 
-    // Periodic time drift sync
+    // Periodic time drift sync without micro-seeking stutter
     LaunchedEffect(isVideoMode, isPlaying) {
         while (isVideoMode && isPlaying) {
-            delay(1200)
+            delay(1500)
             val audioPos = MusicPlayerState.positionMs
             val videoPos = videoPlayer.currentPosition
-            if (kotlin.math.abs(audioPos - videoPos) > 400L) {
+            if (kotlin.math.abs(audioPos - videoPos) > 1500L) {
                 videoPlayer.seekTo(audioPos)
             }
         }
     }
 
     BackHandler(enabled = MusicPlayerState.expanded) {
-        if (isVideoFullscreen) {
-            isVideoFullscreen = false
+        if (MusicPlayerState.isVideoFullscreen) {
+            MusicPlayerState.isVideoFullscreen = false
         } else {
             onCollapse()
         }
@@ -293,17 +322,26 @@ fun IosStyledPlayer(
     ) {
         // ── 1. Full Screen High Quality Artwork / Fullscreen Video Backdrop with Lower Blur Effect ──
         if (isVideoMode && isVideoFullscreen) {
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        videoPlayer.setVideoTextureView(this)
-                    }
-                },
-                update = {
-                    videoPlayer.setVideoTextureView(it)
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds(),
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        TextureView(ctx).apply {
+                            videoPlayer.setVideoTextureView(this)
+                        }
+                    },
+                    update = {
+                        videoPlayer.setVideoTextureView(it)
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .aspectFit(videoAspect, cover = true)
+                )
+            }
         } else {
             AsyncImage(
                 model = track.thumbnailUrl?.highQualityThumbnail(),
@@ -373,8 +411,9 @@ fun IosStyledPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 74.dp, bottom = 320.dp, start = 24.dp, end = 24.dp),
-                contentAlignment = Alignment.Center
+                    .statusBarsPadding()
+                    .padding(top = 58.dp, bottom = 270.dp, start = 20.dp, end = 20.dp),
+                contentAlignment = Alignment.TopCenter
             ) {
                 Box(
                     modifier = Modifier
@@ -385,17 +424,26 @@ fun IosStyledPlayer(
                         .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            TextureView(ctx).apply {
-                                videoPlayer.setVideoTextureView(this)
-                            }
-                        },
-                        update = {
-                            videoPlayer.setVideoTextureView(it)
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AndroidView(
+                            factory = { ctx ->
+                                TextureView(ctx).apply {
+                                    videoPlayer.setVideoTextureView(this)
+                                }
+                            },
+                            update = {
+                                videoPlayer.setVideoTextureView(it)
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .aspectFit(videoAspect, cover = true)
+                        )
+                    }
 
                     if (isVideoLoading) {
                         CircularProgressIndicator(
@@ -426,7 +474,7 @@ fun IosStyledPlayer(
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                text = selectedQuality?.label ?: "Auto",
+                                text = selectedQuality?.label ?: if (loadedQualityHeight > 0) "${loadedQualityHeight}p" else "480p",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
@@ -438,7 +486,7 @@ fun IosStyledPlayer(
                     Surface(
                         shape = CircleShape,
                         color = Color.Black.copy(alpha = 0.65f),
-                        onClick = { isVideoFullscreen = true },
+                        onClick = { MusicPlayerState.isVideoFullscreen = true },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(10.dp)
@@ -483,8 +531,8 @@ fun IosStyledPlayer(
                 isVideoMode = isVideoMode,
                 onToggle = { toVideo ->
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    isVideoMode = toVideo
-                    if (!toVideo) isVideoFullscreen = false
+                    MusicPlayerState.isVideoMode = toVideo
+                    if (!toVideo) MusicPlayerState.isVideoFullscreen = false
                 },
                 modifier = Modifier.align(Alignment.Center)
             )
@@ -495,7 +543,7 @@ fun IosStyledPlayer(
             ) {
                 if (isVideoMode && isVideoFullscreen) {
                     IconButton(
-                        onClick = { isVideoFullscreen = false },
+                        onClick = { MusicPlayerState.isVideoFullscreen = false },
                         modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
@@ -901,7 +949,11 @@ fun IosStyledPlayer(
             VideoQualitySheet(
                 qualities = availableQualities,
                 selected = selectedQuality,
-                onSelect = { selectedQuality = it },
+                onSelect = {
+                    selectedQuality = it
+                    MusicPlayerState.selectedVideoQuality = it?.height
+                    showQualitySheet = false
+                },
                 onDismiss = { showQualitySheet = false }
             )
         }
