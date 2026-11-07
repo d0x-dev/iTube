@@ -17,6 +17,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,10 +26,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
@@ -52,7 +55,18 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.TextUnit
+import coil.compose.AsyncImage
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
@@ -84,6 +98,7 @@ object AppUpdate {
     private const val RELEASES_URL = "https://api.github.com/repos/d0x-dev/iTube/releases?per_page=30"
     private const val APK_ASSET = "iTube.apk"
     private const val KEY_RELEASE = "release"
+    private const val KEY_RELEASE_HISTORY = "release_history"
     /** The version an install was started for: the next start of that version posts "updated". */
     private const val KEY_INSTALLING = "installing"
     /** The install asked the user; Android's own dialog then offers Open, so no notification. */
@@ -100,18 +115,22 @@ object AppUpdate {
         val notes: List<ReleaseNotes> = emptyList(),
     )
 
-    /** One release's notes as published (markdown); [sections] is what the sheet shows. */
+    /** One release's full Markdown body as published on GitHub. */
     data class ReleaseNotes(val version: String, val body: String) {
-        val sections by lazy { parseNotes(body) }
+        val blocks by lazy { parseMarkdown(body) }
     }
 
-    /** "New" / "Fixed" / … (null before any heading) and its bullet points. */
-    data class NoteSection(val title: String?, val items: List<String>)
+    enum class MarkdownKind { Heading, Paragraph, Bullet, Ordered, Quote, Image, Code, Divider }
+    data class MarkdownBlock(val kind: MarkdownKind, val text: String = "", val url: String? = null, val level: Int = 0)
+    internal data class ReleaseIndex(val latest: Release?, val history: List<ReleaseNotes>)
 
     enum class Phase { Ready, Downloading, Installing, Failed }
 
     /** The newer release, or null when this build is the newest (then nothing is shown). */
     var available by mutableStateOf<Release?>(null)
+        private set
+    /** Cached release history, including notes for the version currently installed. */
+    var releaseHistory by mutableStateOf<List<ReleaseNotes>>(emptyList())
         private set
     var phase by mutableStateOf(Phase.Ready)
         private set
@@ -140,6 +159,7 @@ object AppUpdate {
     fun init(context: Context) {
         app = context.applicationContext
         prefs = app.getSharedPreferences("update", Context.MODE_PRIVATE)
+        releaseHistory = savedHistory()
         // Shown straight away from the last check; the daily check corrects it.
         available = savedRelease()?.takeIf { isNewer(it.version) }
         // An installed update leaves its APK behind; keep only the one still to install.
@@ -166,7 +186,7 @@ object AppUpdate {
         checkingNow = true
         if (force) lastCheckMessage = null
         scope.launch {
-            val result = runCatching { withContext(Dispatchers.IO) { fetchLatest() } }
+            val result = runCatching { withContext(Dispatchers.IO) { fetchReleases() } }
             checking = false
             checkingNow = false
             result.onFailure {
@@ -174,10 +194,17 @@ object AppUpdate {
                 lastCheckMessage = "Couldn't check for updates. Check your connection and try again."
                 return@launch
             }
-            val latest = result.getOrNull()
+            val index = result.getOrNull() ?: return@launch
+            val latest = index.latest
             prefs.edit()
-                .apply { if (latest != null) putString(KEY_RELEASE, latest.toJson()) else remove(KEY_RELEASE) }
+                .apply {
+                    if (latest != null) putString(KEY_RELEASE, latest.toJson()) else remove(KEY_RELEASE)
+                    putString(KEY_RELEASE_HISTORY, JSONArray(index.history.map {
+                        JSONObject().put("version", it.version).put("body", it.body)
+                    }).toString())
+                }
                 .apply()
+            releaseHistory = index.history
             val newer = latest?.takeIf { isNewer(it.version) }
             Log.i(TAG, "update check: latest ${latest?.version ?: "none"}, this ${BuildConfig.VERSION_NAME}" +
                 if (newer != null) " → update available" else "")
@@ -277,14 +304,14 @@ object AppUpdate {
             .onFailure { Log.w(TAG, "update: couldn't post the updated notification (${it.message})") }
     }
 
-    private fun fetchLatest(): Release? {
+    private fun fetchReleases(): ReleaseIndex {
         val request = Request.Builder().url(RELEASES_URL)
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "iTube/${BuildConfig.VERSION_NAME}")
             .build()
         Net.client.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "HTTP ${response.code}" }
-            return parseReleases(JSONArray(response.body?.string().orEmpty()), BuildConfig.VERSION_NAME)
+            return parseReleaseIndex(JSONArray(response.body?.string().orEmpty()), BuildConfig.VERSION_NAME)
         }
     }
 
@@ -292,17 +319,21 @@ object AppUpdate {
      * The releases list → the newest published release with its versioned AirStream APK, carrying the notes of every
      * release newer than [current] up to it (a phone that skipped versions sees all of their changes).
      */
-    internal fun parseReleases(json: JSONArray, current: String): Release? {
+    internal fun parseReleases(json: JSONArray, current: String): Release? = parseReleaseIndex(json, current).latest
+
+    internal fun parseReleaseIndex(json: JSONArray, current: String): ReleaseIndex {
         val published = (0 until json.length()).map { json.getJSONObject(it) }
             .filter { !it.optBoolean("draft") && !it.optBoolean("prerelease") }
-        val latest = published.mapNotNull { parseRelease(it) }.maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
-            ?: return null
-        val notes = published
-            .map { ReleaseNotes(it.optString("tag_name").removePrefix("v"), it.optString("body")) }
-            .filter { compareVersions(it.version, current) > 0 && compareVersions(it.version, latest.version) <= 0 }
-            .filter { it.sections.isNotEmpty() }
+        val parsed = published.mapNotNull { parseRelease(it) }
+        val history = parsed
+            .mapNotNull { it.notes.firstOrNull() }
             .sortedWith { a, b -> compareVersions(b.version, a.version) }
-        return latest.copy(notes = notes)
+        val latest = parsed.maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
+            ?: return ReleaseIndex(null, history)
+        val notes = history
+            .filter { compareVersions(it.version, current) > 0 && compareVersions(it.version, latest.version) <= 0 }
+            .sortedWith { a, b -> compareVersions(b.version, a.version) }
+        return ReleaseIndex(latest.copy(notes = notes), history)
     }
 
     /** Latest release JSON → matching APK asset, or the documented direct URL if the APK is still uploading. */
@@ -318,42 +349,58 @@ object AppUpdate {
             apkUrl = apk?.optString("browser_download_url")?.ifBlank { null } ?: directUrl,
             size = apk?.optLong("size") ?: 0L,
             sha256 = apk?.optString("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
-            notes = listOf(ReleaseNotes(version, json.optString("body"))).filter { it.sections.isNotEmpty() },
+            notes = listOf(ReleaseNotes(version, json.optString("body"))),
         )
     }
 
     internal fun releaseAssetName(version: String) = "iTube_v${version}_signed.apk"
 
-    /**
-     * A release body → its sections: "### New" headings and "- " bullets (a bullet's indented next lines
-     * join it). Everything after a "---" line is for the web page (install help), and so is any loose
-     * paragraph; bold, code and links keep only their text.
-     */
-    internal fun parseNotes(body: String): List<NoteSection> {
-        val sections = mutableListOf<NoteSection>()
-        var title: String? = null
-        val items = mutableListOf<String>()
-        fun flush() {
-            if (items.isNotEmpty()) sections += NoteSection(title, items.toList())
-            items.clear()
+    /** Parse common GitHub Markdown blocks while retaining raw inline Markdown for styling. */
+    internal fun parseMarkdown(body: String): List<MarkdownBlock> {
+        val blocks = mutableListOf<MarkdownBlock>()
+        val paragraph = mutableListOf<String>()
+        val code = mutableListOf<String>()
+        var inCode = false
+        fun flushParagraph() {
+            val value = paragraph.joinToString(" ").trim()
+            if (value.isNotEmpty()) blocks += MarkdownBlock(MarkdownKind.Paragraph, value)
+            paragraph.clear()
         }
-        for (raw in body.lineSequence()) {
+        for (raw in body.replace("\r\n", "\n").lines()) {
             val line = raw.trim()
-            if (line == "---") break
+            if (line.startsWith("```") || line.startsWith("~~~")) {
+                if (inCode) {
+                    blocks += MarkdownBlock(MarkdownKind.Code, code.joinToString("\n"))
+                    code.clear()
+                    inCode = false
+                } else {
+                    flushParagraph()
+                    inCode = true
+                }
+                continue
+            }
+            if (inCode) { code += raw; continue }
+            if (line.isEmpty()) { flushParagraph(); continue }
+            val heading = Regex("^(#{1,6})\\s+(.+)$").matchEntire(line)
+            val image = Regex("""^!\[([^]]*)]\((https?://[^ )]+)(?:\s+"[^"]*")?\)$""").matchEntire(line)
+            val htmlImage = Regex("""(?i)^<img\b[^>]*src="([^"]+)"[^>]*>$""").matchEntire(line)
+            val bullet = Regex("^\\s*[-*+]\\s+(.+)$").matchEntire(raw)
+            val ordered = Regex("^\\s*(\\d+)[.)]\\s+(.+)$").matchEntire(raw)
             when {
-                line.startsWith("#") -> { flush(); title = plain(line.trimStart('#').trim()).ifBlank { null } }
-                line.startsWith("- ") || line.startsWith("* ") -> items += plain(line.substring(2).trim())
-                line.isNotEmpty() && items.isNotEmpty() && raw.startsWith("  ") -> items[items.lastIndex] += " " + plain(line)
+                line == "---" || line == "***" || line == "___" -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Divider) }
+                heading != null -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Heading, heading.groupValues[2], level = heading.groupValues[1].length) }
+                image != null -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Image, image.groupValues[1], image.groupValues[2]) }
+                htmlImage != null -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Image, "", htmlImage.groupValues[1]) }
+                bullet != null -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Bullet, bullet.groupValues[1]) }
+                ordered != null -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Ordered, "${ordered.groupValues[1]}. ${ordered.groupValues[2]}") }
+                line.startsWith("> ") -> { flushParagraph(); blocks += MarkdownBlock(MarkdownKind.Quote, line.removePrefix("> ")) }
+                else -> paragraph += line
             }
         }
-        flush()
-        return sections
+        if (inCode) blocks += MarkdownBlock(MarkdownKind.Code, code.joinToString("\n"))
+        flushParagraph()
+        return blocks
     }
-
-    private fun plain(markdown: String) = markdown
-        .replace(Regex("""\[([^\]]+)]\([^)]*\)"""), "$1")
-        .replace(Regex("""\*\*(.+?)\*\*"""), "$1")
-        .replace(Regex("""`([^`]+)`"""), "$1")
 
     /** "0.5.55" vs "0.5.54" → positive; missing parts count as 0. */
     internal fun compareVersions(a: String, b: String): Int {
@@ -459,6 +506,17 @@ object AppUpdate {
         }.getOrNull()
     }
 
+    private fun savedHistory(): List<ReleaseNotes> = prefs.getString(KEY_RELEASE_HISTORY, null)?.let { raw ->
+        runCatching {
+            val array = JSONArray(raw)
+            (0 until array.length()).map { array.getJSONObject(it).let { item ->
+                ReleaseNotes(item.getString("version"), item.optString("body"))
+            } }.sortedWith { a, b -> compareVersions(b.version, a.version) }
+        }.getOrNull()
+    }.orEmpty()
+
+    fun releaseNotesFor(version: String): ReleaseNotes? = releaseHistory.firstOrNull { it.version == version }
+
     private fun Release.toJson() =
         JSONObject().put("version", version).put("url", apkUrl).put("size", size).put("sha256", sha256 ?: "")
             .put("notes", JSONArray(notes.map { JSONObject().put("version", it.version).put("body", it.body) }))
@@ -559,21 +617,53 @@ fun UpdateAction() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UpdateNotesSheet(release: AppUpdate.Release, onDismiss: () -> Unit) {
+    ReleaseNotesSheet(
+        title = "What's new",
+        notes = release.notes,
+        downloadRelease = release,
+        onDismiss = onDismiss,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InstalledVersionNotesSheet(notes: AppUpdate.ReleaseNotes, onDismiss: () -> Unit) {
+    ReleaseNotesSheet(
+        title = "Release notes · iTube ${notes.version}",
+        notes = listOf(notes),
+        downloadRelease = null,
+        onDismiss = onDismiss,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReleaseNotesSheet(
+    title: String,
+    notes: List<AppUpdate.ReleaseNotes>,
+    downloadRelease: AppUpdate.Release?,
+    onDismiss: () -> Unit,
+) {
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
-    val phase = AppUpdate.phase
+    val several = notes.size > 1
+    val hasContent = notes.any { it.blocks.isNotEmpty() }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = c.surfaceContainerLow,
     ) {
         Text(
-            "What's new",
+            title,
             fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp,
             modifier = Modifier.padding(horizontal = 24.dp),
         )
-        Text(
-            listOfNotNull("iTube ${release.version}", release.size.takeIf { it > 0 }?.let { "%.1f MB".format(Locale.US, it / 1_048_576.0) }).joinDots(),
+        val meta = listOfNotNull(
+            downloadRelease?.version?.let { "iTube $it" },
+            downloadRelease?.size?.takeIf { it > 0 }?.let { "%.1f MB".format(Locale.US, it / 1_048_576.0) },
+        ).joinDots()
+        if (meta.isNotEmpty()) Text(
+            meta,
             color = c.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 14.dp),
         )
@@ -581,56 +671,135 @@ fun UpdateNotesSheet(release: AppUpdate.Release, onDismiss: () -> Unit) {
             Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            if (release.notes.isEmpty()) {
+            if (!hasContent) {
                 Text("No notes were published with this version.", color = c.onSurfaceVariant, fontSize = 15.sp, lineHeight = 21.sp)
             }
-            val several = release.notes.size > 1
-            release.notes.forEach { notes ->
+            notes.forEach { releaseNotes ->
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (several) {
-                        Text(notes.version, color = c.primary, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                        Text(releaseNotes.version, color = c.primary, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
                     }
-                    notes.sections.forEach { NoteSectionBlock(it) }
+                    MarkdownReleaseBody(releaseNotes.blocks)
                 }
             }
         }
-        Spacer(Modifier.height(18.dp))
-        Box(
-            modifier = Modifier
-                .padding(horizontal = 24.dp)
-                .fillMaxWidth()
-            .pressable { AppUpdate.openDownload(context) }
-                .height(54.dp)
-                .clip(CircleShape)
-                .background(c.primary)
-                .drawBehind {
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                "Download APK",
-                color = c.onPrimary,
-                fontFamily = RoundedHeavy,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 16.sp,
-                maxLines = 1,
-            )
+        if (downloadRelease != null) {
+            Spacer(Modifier.height(18.dp))
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 24.dp)
+                    .fillMaxWidth()
+                    .pressable { AppUpdate.openDownload(context) }
+                    .height(54.dp)
+                    .clip(CircleShape)
+                    .background(c.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Download APK",
+                    color = c.onPrimary,
+                    fontFamily = RoundedHeavy,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                )
+            }
         }
         Spacer(Modifier.height(24.dp))
     }
 }
 
 @Composable
-private fun NoteSectionBlock(section: AppUpdate.NoteSection) {
+private fun MarkdownReleaseBody(blocks: List<AppUpdate.MarkdownBlock>) {
     val c = MaterialTheme.colorScheme
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        section.title?.let { Text(it, color = c.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-        section.items.forEach { item ->
-            Row {
-                // The dot sits on the first line's middle (15 sp text on 21 sp lines).
-                Box(Modifier.padding(top = 8.dp, end = 12.dp).size(5.dp).clip(CircleShape).background(c.primary))
-                Text(item, fontSize = 15.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
+    val uri = LocalUriHandler.current
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        blocks.forEach { block ->
+            when (block.kind) {
+                AppUpdate.MarkdownKind.Heading -> MarkdownInlineText(
+                    block.text,
+                    fontSize = when (block.level) { 1 -> 22.sp; 2 -> 20.sp; 3 -> 18.sp; else -> 16.sp },
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 27.sp,
+                )
+                AppUpdate.MarkdownKind.Paragraph -> MarkdownInlineText(block.text, fontSize = 15.sp, lineHeight = 22.sp)
+                AppUpdate.MarkdownKind.Bullet -> Row(verticalAlignment = Alignment.Top) {
+                    Box(Modifier.padding(top = 9.dp, end = 11.dp).size(6.dp).clip(CircleShape).background(c.primary))
+                    MarkdownInlineText(block.text, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.weight(1f))
+                }
+                AppUpdate.MarkdownKind.Ordered -> MarkdownInlineText(block.text, fontSize = 15.sp, lineHeight = 22.sp)
+                AppUpdate.MarkdownKind.Quote -> Row(verticalAlignment = Alignment.Top) {
+                    Box(Modifier.padding(end = 10.dp).size(width = 3.dp, height = 40.dp).clip(CircleShape).background(c.primary.copy(alpha = 0.7f)))
+                    MarkdownInlineText(block.text, fontSize = 15.sp, lineHeight = 22.sp, italic = true, modifier = Modifier.weight(1f))
+                }
+                AppUpdate.MarkdownKind.Image -> {
+                    block.url?.let { imageUrl ->
+                        AsyncImage(
+                            model = imageUrl,
+                            contentDescription = block.text.ifBlank { "Release image" },
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .pressable { uri.openUri(imageUrl) },
+                        )
+                    }
+                    if (block.text.isNotBlank()) Text(block.text, color = c.onSurfaceVariant, fontSize = 12.sp)
+                }
+                AppUpdate.MarkdownKind.Code -> Text(
+                    block.text,
+                    color = c.onSurface,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(c.surfaceContainerHigh).padding(12.dp),
+                )
+                AppUpdate.MarkdownKind.Divider -> Box(Modifier.fillMaxWidth().height(1.dp).background(c.outlineVariant))
             }
         }
     }
+}
+
+@Composable
+private fun MarkdownInlineText(
+    markdown: String,
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+    fontWeight: FontWeight? = null,
+    italic: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val c = MaterialTheme.colorScheme
+    val uri = LocalUriHandler.current
+    val pattern = remember {
+        Regex("""\[([^\]]+)]\((https?://[^ )]+)(?:\s+"[^"]*")?\)|\*\*(.+?)\*\*|__(.+?)__|\*(.+?)\*|_(.+?)_|`([^`]+)`|~~(.+?)~~""")
+    }
+    val annotated = buildAnnotatedString {
+        var cursor = 0
+        for (match in pattern.findAll(markdown)) {
+            append(markdown.substring(cursor, match.range.first))
+            val groups = match.groups
+            when {
+                groups[1] != null -> {
+                    pushStringAnnotation("url", groups[2]!!.value)
+                    withStyle(SpanStyle(color = c.primary, textDecoration = TextDecoration.Underline)) { append(groups[1]!!.value) }
+                    pop()
+                }
+                groups[3] != null -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(groups[3]!!.value) }
+                groups[4] != null -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(groups[4]!!.value) }
+                groups[5] != null -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(groups[5]!!.value) }
+                groups[6] != null -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(groups[6]!!.value) }
+                groups[7] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = c.surfaceContainerHigh)) { append(groups[7]!!.value) }
+                groups[8] != null -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(groups[8]!!.value) }
+            }
+            cursor = match.range.last + 1
+        }
+        if (cursor < markdown.length) append(markdown.substring(cursor))
+    }
+    ClickableText(
+        text = annotated,
+        modifier = modifier,
+        style = TextStyle(color = c.onSurface, fontSize = fontSize, lineHeight = lineHeight, fontWeight = fontWeight),
+        onClick = { offset -> annotated.getStringAnnotations("url", offset, offset).firstOrNull()?.let { uri.openUri(it.item) } },
+    )
 }
