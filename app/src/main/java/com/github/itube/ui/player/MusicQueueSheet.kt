@@ -30,6 +30,9 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.media3.common.Player
 import com.github.itube.MusicPlayerState
 import com.github.itube.MusicTrack
 import com.github.itube.highQualityThumbnail
@@ -70,6 +74,8 @@ fun MusicQueueSheet(
     val queue = MusicPlayerState.queue
     val currentIndex = MusicPlayerState.queueIndex
     val isPlaying = MusicPlayerState.isPlaying
+    val shuffleEnabled = MusicPlayerState.shuffleEnabled
+    val repeatMode = MusicPlayerState.repeatMode
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     BackHandler(enabled = MusicPlayerState.queueOpen) {
@@ -234,6 +240,33 @@ fun MusicQueueSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                QueueModeButton(
+                    icon = Icons.Rounded.Shuffle,
+                    label = "Shuffle",
+                    selected = shuffleEnabled,
+                    onClick = MusicPlayerState::toggleShuffle,
+                    modifier = Modifier.weight(1f),
+                )
+                QueueModeButton(
+                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    label = when (repeatMode) {
+                        Player.REPEAT_MODE_ALL -> "Repeat all"
+                        Player.REPEAT_MODE_ONE -> "Repeat one"
+                        else -> "Repeat"
+                    },
+                    selected = repeatMode != Player.REPEAT_MODE_OFF,
+                    onClick = MusicPlayerState::toggleRepeat,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             // Up Next List
             val upcoming = queue.filterIndexed { index, _ -> index != currentIndex }
             Text(
@@ -280,6 +313,33 @@ fun MusicQueueSheet(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun QueueModeButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = modifier,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(label, color = tint, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
         }
     }
 }
