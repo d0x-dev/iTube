@@ -236,6 +236,7 @@ fun AirStreamApp() {
     var historyOpen by remember { mutableStateOf(false) }
     var openChannel by remember { mutableStateOf<String?>(null) }
     var openPublicCollection by remember { mutableStateOf<PublicCollection?>(null) }
+    // State
     var openMusicArtist by remember { mutableStateOf<MusicArtist?>(null) }
     var openMusicPlaylist by remember { mutableStateOf<MusicPlaylistRef?>(null) }
     var openMoodsAndGenres by remember { mutableStateOf(false) }
