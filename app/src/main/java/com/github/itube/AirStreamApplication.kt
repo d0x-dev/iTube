@@ -13,6 +13,7 @@ class AirStreamApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReports.install(this)
         NewPipe.init(NewPipeDownloader.instance)
         // The iOS client only adds HLS livestream formats; AirStream plays VOD, so skip that request.
         org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor.setFetchIosClient(false)
@@ -25,6 +26,8 @@ class AirStreamApplication : Application(), ImageLoaderFactory {
         CaptionTranslator.refresh()
         SearchHistory.init(this)
         ListeningProfile.init(this)
+        DownloadLibrary.init(this)
+        SavedCollections.init(this)
         ResumeStore.init(this)
         SavedSession.init(this)
         Account.init(this)
