@@ -21,6 +21,7 @@ object MusicBackend {
     private const val TAG = "MusicBackend"
     private const val BROWSE_URL = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
     private const val SEARCH_URL = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+    private const val NEXT_URL = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false"
     private const val SONG_PARAMS = "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"
     private const val ARTIST_PARAMS = "EgWKAQIgAWoKEAkQBRAKEAMQBA%3D%3D"
     private const val ALBUM_PARAMS = "EgWKAQIYAWoKEAkQBRAKEAMQBA%3D%3D"
@@ -472,12 +473,171 @@ object MusicBackend {
         }
     }
 
-    /** Builds a radio queue from the current song's artist/title, excluding the playing song. */
-    suspend fun relatedTracks(track: MusicTrack): List<MusicTrack> = withContext(Dispatchers.IO) {
-        searchMusic("${track.artists} ${track.title}")
-            .filter { it.id != track.id }
+    /**
+     * Official YouTube Music Radio queue fetching using the official /v1/next endpoint.
+     * Parses authentic playlistPanelVideoRenderer items.
+     */
+    suspend fun fetchRadioQueue(videoId: String): List<MusicTrack> = withContext(Dispatchers.IO) {
+        val tracks = mutableListOf<MusicTrack>()
+        try {
+            val root = postInnerTubeNext(videoId)
+            root.walk { key, itemObj ->
+                if (key == "playlistPanelVideoRenderer") {
+                    parsePlaylistPanelVideo(itemObj)?.let {
+                        if (it.id != videoId) tracks.add(it)
+                    }
+                } else if (key == "musicResponsiveListItemRenderer") {
+                    val wrapper = JSONObject().put(key, itemObj)
+                    parseTrackItem(wrapper)?.let {
+                        if (it.id != videoId) tracks.add(it)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchRadioQueue failed for videoId $videoId: ${e.message}")
+        }
+        tracks.distinctBy { it.id }
+    }
+
+    /**
+     * Builds an authentic, user-experience continuous radio queue for the playing song.
+     * Uses YouTube Music's algorithmic radio, enriched with user artist affinities,
+     * completely eliminating random search text spam.
+     */
+    suspend fun buildUserExperienceQueue(seedTrack: MusicTrack): List<MusicTrack> = withContext(Dispatchers.IO) {
+        val queue = mutableListOf<MusicTrack>()
+
+        // 1. Fetch official YouTube Music algorithmic radio queue
+        val officialRadio = runCatching { fetchRadioQueue(seedTrack.id) }.getOrDefault(emptyList())
+        if (officialRadio.isNotEmpty()) {
+            queue.addAll(officialRadio)
+        }
+
+        // 2. If official radio gave fewer than 8 tracks, supplement with artist's top tracks (NOT raw text search!)
+        if (queue.size < 8 && !seedTrack.artistId.isNullOrBlank()) {
+            runCatching {
+                fetchArtistDetails(seedTrack.artistId)?.topTracks
+            }.getOrNull()?.let { topTracks ->
+                val remaining = topTracks.filter { it.id != seedTrack.id && it.id !in queue.map { q -> q.id } }
+                queue.addAll(remaining)
+            }
+        }
+
+        // 3. User Experience Biasing:
+        // Rank / interleave tracks by user's confirmed artist affinities
+        val topAffinities = ListeningProfile.getTopArtists(8).map { it.name.trim().lowercase() }.toSet()
+        val likedTrackIds = ListeningProfile.getLikedTrackIds()
+
+        val personalizedQueue = queue.map { track ->
+            val isLiked = track.id in likedTrackIds || ListeningProfile.isLiked(track.id)
+            if (isLiked && !track.liked) track.copy(liked = true) else track
+        }.sortedWith(
+            compareByDescending<MusicTrack> { track ->
+                val parsed = ListeningProfile.parseArtistNamesCompat(track.artists)
+                val matchesAffinity = parsed.any { it.trim().lowercase() in topAffinities }
+                if (matchesAffinity) 2 else 0
+            }.thenByDescending { it.liked }
+        )
+
+        val finalQueue = (listOf(seedTrack) + personalizedQueue)
             .distinctBy { it.id }
-            .take(24)
+            .take(50)
+
+        finalQueue.filter { it.id != seedTrack.id }
+    }
+
+    /** Builds an authentic radio queue from the current song, excluding the playing song. */
+    suspend fun relatedTracks(track: MusicTrack): List<MusicTrack> = buildUserExperienceQueue(track)
+
+    private fun postInnerTubeNext(videoId: String, playlistId: String? = null): JSONObject {
+        val clientObj = JSONObject()
+            .put("clientName", "WEB_REMIX")
+            .put("clientVersion", "1.20240101.01.00")
+            .put("hl", "en")
+            .put("gl", "US")
+
+        val body = JSONObject()
+            .put("videoId", videoId)
+            .put("isAudioOnly", true)
+            .put("context", JSONObject().put("client", clientObj))
+
+        if (!playlistId.isNullOrBlank()) {
+            body.put("playlistId", playlistId)
+        } else {
+            body.put("playlistId", "RDAMVM$videoId")
+        }
+
+        val request = Request.Builder()
+            .url(NEXT_URL)
+            .post(body.toString().toRequestBody(JSON_TYPE))
+            .header("Origin", "https://music.youtube.com")
+            .header("Referer", "https://music.youtube.com/")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("X-Youtube-Client-Name", "67")
+            .header("X-Youtube-Client-Version", "1.20240101.01.00")
+            .build()
+
+        Net.client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw java.io.IOException("InnerTube next request failed: ${response.code}")
+            }
+            val text = response.body?.string().orEmpty()
+            return JSONObject(text)
+        }
+    }
+
+    private fun parsePlaylistPanelVideo(panel: JSONObject): MusicTrack? {
+        val videoId = panel.optString("videoId")
+        if (videoId.isNullOrBlank()) return null
+
+        val title = panel.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text").orEmpty()
+        val bylineRuns = panel.optJSONObject("longBylineText")?.optJSONArray("runs")
+            ?: panel.optJSONObject("shortBylineText")?.optJSONArray("runs")
+
+        var artists = ""
+        var artistId: String? = null
+        var album: String? = null
+        var albumId: String? = null
+
+        if (bylineRuns != null && bylineRuns.length() > 0) {
+            val nonDelimiterRuns = mutableListOf<Pair<String, String?>>()
+            for (r in 0 until bylineRuns.length()) {
+                val runObj = bylineRuns.optJSONObject(r)
+                val t = runObj?.optString("text").orEmpty().trim()
+                val bId = runObj?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId")
+                if (t.isNotEmpty() && t != "•" && t != "·" && !t.contains("views") && !t.contains("likes")) {
+                    nonDelimiterRuns.add(t to bId)
+                }
+            }
+            if (nonDelimiterRuns.isNotEmpty()) {
+                artists = nonDelimiterRuns[0].first
+                artistId = nonDelimiterRuns[0].second
+                if (nonDelimiterRuns.size > 1) {
+                    album = nonDelimiterRuns[1].first
+                    albumId = nonDelimiterRuns[1].second
+                }
+            }
+        }
+
+        val lenText = panel.optJSONObject("lengthText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text").orEmpty()
+        val durationSec = if (lenText.isNotBlank()) parseTimeString(lenText) else 0L
+
+        val thumbUrl = panel.optJSONObject("thumbnail")
+            ?.optJSONArray("thumbnails")
+            ?.let { thumbs ->
+                thumbs.optJSONObject(thumbs.length() - 1)?.optString("url")
+            }?.highQualityThumbnail()
+
+        return MusicTrack(
+            id = videoId,
+            title = title.ifBlank { "Unknown Title" },
+            artists = artists.ifBlank { "Various Artists" },
+            artistId = artistId,
+            album = album,
+            albumId = albumId,
+            thumbnailUrl = thumbUrl,
+            durationSec = durationSec
+        )
     }
 
     private fun postInnerTube(browseId: String, params: String? = null): JSONObject {
