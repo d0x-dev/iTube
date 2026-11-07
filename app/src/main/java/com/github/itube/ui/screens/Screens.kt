@@ -1361,6 +1361,7 @@ class SearchState(private val scope: CoroutineScope) {
         musicResults = emptyList()
         musicArtistResults = emptyList()
         musicPlaylistResults = emptyList()
+        ListeningProfile.recordSearch(musicSubmitted, musicFilter.name)
         musicJob = scope.launch {
             runCatching {
                 when (musicFilter) {
