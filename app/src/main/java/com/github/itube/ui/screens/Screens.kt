@@ -57,6 +57,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.OfflinePin
+import com.github.itube.MusicCacheManager
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -373,6 +375,7 @@ fun LibraryScreen(
     onOpenHistory: () -> Unit = {},
     onOpenPlaylist: (PlaylistRef) -> Unit,
     onOpenDownloads: () -> Unit,
+    onOpenCachedMusic: () -> Unit = {},
     onOpenCollection: (PublicCollection) -> Unit,
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
@@ -453,13 +456,27 @@ fun LibraryScreen(
                     }
                 }
             }
-            item(key = "downloadsTitle") { SectionTitle("Downloads") }
-            item(key = "downloads") {
-                PlaylistTile(
-                    PlaylistRef("DL", "Downloads", null, "${DownloadLibrary.entries.size} videos"),
-                    Modifier.fillMaxWidth(),
-                    onOpenDownloads,
-                )
+            item(key = "offlineMediaTitle") { SectionTitle("Offline & Downloads") }
+            item(key = "offlineMedia") {
+                val cachedCount = MusicCacheManager.cachedTracks.size
+                val cachedBytes = MusicCacheManager.totalStorageBytes.longValue
+                val cachedSizeStr = MusicCacheManager.formatStorageSize(cachedBytes)
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PlaylistTile(
+                        PlaylistRef("DL", "Downloads", null, "${DownloadLibrary.entries.size} videos"),
+                        Modifier.weight(1f),
+                        onOpenDownloads,
+                    )
+                    CachedSongsTile(
+                        title = "Cached songs",
+                        subtitle = "$cachedCount songs • $cachedSizeStr",
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenCachedMusic
+                    )
+                }
             }
             if (SavedCollections.items.isNotEmpty()) {
                 item(key = "savedCollectionsTitle") { SectionTitle("Saved collections") }
@@ -528,6 +545,37 @@ private fun PlaylistTile(playlist: PlaylistRef, modifier: Modifier, onClick: () 
         Column {
             Text(playlist.title, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             playlist.subtitle?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+        }
+    }
+}
+
+@Composable
+private fun CachedSongsTile(title: String, subtitle: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(26.dp)
+    Column(
+        modifier = modifier
+            .height(132.dp)
+            .pressable(pressedScale = 0.97f, onClick = onClick)
+            .clip(shape)
+            .background(c.surfaceContainerLow)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Box(
+            modifier = Modifier.size(52.dp).clip(CookieShape).background(c.tertiaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.OfflinePin,
+                contentDescription = null,
+                tint = contentColorFor(c.tertiaryContainer),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Column {
+            Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
