@@ -1,6 +1,7 @@
 package com.github.itube.ui.screens
 
 import android.content.Intent
+import com.github.itube.ListeningProfile
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
@@ -119,6 +120,7 @@ fun iMusicArtistScreen(
             val fetched = MusicBackend.fetchArtistDetails(channelId)
             artist = fetched
             isLoading = false
+            fetched?.let { ListeningProfile.recordArtistDetails(it) }
         }
     }
 
