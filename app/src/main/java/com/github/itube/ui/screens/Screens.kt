@@ -1249,7 +1249,6 @@ enum class SearchCategory {
     Music,
 }
 
-// Filters
 enum class MusicSearchFilter { Songs, Artists, Albums, Playlists }
 
 /** Lives above the tab switcher so results survive switching tabs. */
@@ -1355,6 +1354,7 @@ class SearchState(private val scope: CoroutineScope) {
         }
     }
 
+    // Submit music
     private fun submitMusic() {
         musicLoading = true
         musicError = null
