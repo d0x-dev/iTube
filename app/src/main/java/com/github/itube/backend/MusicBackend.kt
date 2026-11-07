@@ -192,7 +192,6 @@ object MusicBackend {
      * When [channelId] is NOT a valid YTM browse ID (UC* or MPLA*), it's treated as an artist
      * name and we search for the real channel ID first, then browse it.
      */
-    // Details
     suspend fun fetchArtistDetails(channelId: String): ArtistDetails? = withContext(Dispatchers.IO) {
         try {
             // Resolve real browseId if channelId looks like a name rather than a YTM ID
