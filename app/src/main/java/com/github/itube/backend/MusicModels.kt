@@ -123,3 +123,48 @@ data class WordTiming(
     val text: String,
 )
 
+/** Upgrades YouTube and Google CDN album artwork to high resolution (544px / 720p). */
+fun String.highQualityThumbnail(): String {
+    var url = this
+    if (url.contains("googleusercontent.com") || url.contains("ggpht.com")) {
+        url = if (url.contains(Regex("=w\\d+-h\\d+"))) {
+            url.replace(Regex("=w\\d+-h\\d+"), "=w544-h544")
+        } else if (url.contains(Regex("=s\\d+"))) {
+            url.replace(Regex("=s\\d+"), "=s544")
+        } else {
+            "$url=w544-h544"
+        }
+    }
+    // YouTube video thumbnail upgrade
+    if (url.contains("i.ytimg.com/vi/")) {
+        if (url.contains("/default.jpg") || url.contains("/mqdefault.jpg") || url.contains("/hqdefault.jpg")) {
+            url = url.replace(Regex("/(default|mqdefault|hqdefault)\\.jpg"), "/hq720.jpg")
+        }
+    }
+    return url
+}
+
+/** Formats seconds into MM:SS or HH:MM:SS string. */
+fun formatMusicDuration(seconds: Long): String {
+    if (seconds <= 0) return ""
+    val m = seconds / 60
+    val s = seconds % 60
+    return if (seconds >= 3600) {
+        val h = seconds / 3600
+        val remM = (seconds % 3600) / 60
+        "%d:%02d:%02d".format(h, remM, s)
+    } else {
+        "%d:%02d".format(m, s)
+    }
+}
+
+/** Parses time string such as "3:45" or "1:15:20" to seconds. */
+fun parseTimeString(timeStr: String): Long {
+    val parts = timeStr.trim().split(":")
+    return when (parts.size) {
+        1 -> parts[0].toLongOrNull() ?: 0L
+        2 -> (parts[0].toLongOrNull() ?: 0L) * 60 + (parts[1].toLongOrNull() ?: 0L)
+        3 -> (parts[0].toLongOrNull() ?: 0L) * 3600 + (parts[1].toLongOrNull() ?: 0L) * 60 + (parts[2].toLongOrNull() ?: 0L)
+        else -> 0L
+    }
+}
