@@ -35,10 +35,16 @@ import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import okhttp3.Call
 
 sealed class DownloadOption {
     abstract val label: String
@@ -54,6 +60,7 @@ sealed class DownloadOption {
         val videoStreamUrl: String,
         val audioStreamUrl: String?,
         val isMuxed: Boolean,
+        val isWebm: Boolean = false,
     ) : DownloadOption()
 
     data class Audio(
@@ -101,13 +108,18 @@ object VideoDownloader {
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
             .groupBy { it.height }
 
-        val bestAudio = info.audioStreams
+        val bestM4a = info.audioStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
             .sortedWith(
                 compareBy<org.schabi.newpipe.extractor.stream.AudioStream> {
                     if (it.format == org.schabi.newpipe.extractor.MediaFormat.M4A) 0 else 1
                 }.thenByDescending { it.averageBitrate }
             ).firstOrNull()
+
+        val bestOpus = info.audioStreams
+            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && (it.format == org.schabi.newpipe.extractor.MediaFormat.WEBMA_OPUS || it.codec?.contains("opus", ignoreCase = true) == true) }
+            .maxByOrNull { it.averageBitrate }
+            ?: bestM4a
 
         val allHeights = (muxedStreams.keys + videoOnlyStreams.keys).sortedDescending()
 
@@ -129,32 +141,37 @@ object VideoDownloader {
                         videoStreamUrl = muxed.content,
                         audioStreamUrl = null,
                         isMuxed = true,
+                        isWebm = false,
                     )
                 )
             } else {
-                val videoOnly = videoOnlyStreams[height]?.let { list ->
-                    list.filter { it.codec?.startsWith("avc") == true }.maxByOrNull { it.fps * 1000 + it.bitrate }
-                        ?: list.maxByOrNull { it.fps * 1000 + it.bitrate }
-                }
+                val list = videoOnlyStreams[height].orEmpty()
+                val avc = list.filter { it.codec?.startsWith("avc", ignoreCase = true) == true }.maxByOrNull { it.fps * 1000 + it.bitrate }
+                val vp9 = list.filter { it.format == org.schabi.newpipe.extractor.MediaFormat.WEBM || it.codec?.contains("vp9", ignoreCase = true) == true }.maxByOrNull { it.fps * 1000 + it.bitrate }
+                val chosen = avc ?: vp9 ?: list.maxByOrNull { it.fps * 1000 + it.bitrate }
 
-                if (videoOnly != null) {
-                    val audioBitrate = bestAudio?.averageBitrate ?: 128
-                    val totalBitrate = videoOnly.bitrate + (audioBitrate * 1000)
+                if (chosen != null) {
+                    val isWebm = chosen.format == org.schabi.newpipe.extractor.MediaFormat.WEBM || chosen.codec?.contains("vp9", ignoreCase = true) == true
+                    val selectedAudio = if (isWebm) bestOpus else bestM4a
+                    val audioBitrate = selectedAudio?.averageBitrate ?: 128
+                    val totalBitrate = chosen.bitrate + (audioBitrate * 1000)
                     val sizeStr = if (durationSec > 0 && totalBitrate > 0) {
                         formatBytes((totalBitrate.toLong() * durationSec) / 8)
                     } else null
 
-                    val fpsStr = if (videoOnly.fps > 30) " · ${videoOnly.fps}fps" else ""
+                    val fpsStr = if (chosen.fps > 30) " · ${chosen.fps}fps" else ""
+                    val containerTag = if (isWebm) "WebM" else "MP4"
                     options.add(
                         DownloadOption.Video(
                             height = height,
-                            fps = videoOnly.fps,
+                            fps = chosen.fps,
                             label = "${height}p",
-                            formatLabel = "MP4$fpsStr (HD)",
+                            formatLabel = "$containerTag$fpsStr (HD)",
                             approxSize = sizeStr,
-                            videoStreamUrl = videoOnly.content,
-                            audioStreamUrl = bestAudio?.content,
+                            videoStreamUrl = chosen.content,
+                            audioStreamUrl = selectedAudio?.content,
                             isMuxed = false,
+                            isWebm = isWebm,
                         )
                     )
                 }
@@ -354,27 +371,32 @@ object VideoDownloader {
                 }
             }
             is DownloadOption.Video -> {
+                val isWebm = option.isWebm
+                val ext = if (isWebm) "webm" else "mp4"
+                val audioExt = if (isWebm) "opus" else "m4a"
+                val mime = if (isWebm) "video/webm" else "video/mp4"
+
                 if (option.isMuxed || option.audioStreamUrl == null) {
-                    val tempFile = File(cacheDir, "dl_${System.currentTimeMillis()}_${cleanTitle}.mp4")
+                    val tempFile = File(cacheDir, "dl_${System.currentTimeMillis()}_${cleanTitle}.$ext")
                     try {
                         downloadFile(option.videoStreamUrl, tempFile) { read, total ->
                             val percent = if (total > 0) ((read * 100) / total).toInt() else 0
                             val text = "${option.label} · $percent% (${formatBytes(read)} / ${formatBytes(total)})"
                             updateProgress(percent, text)
                         }
-                        val fileName = "$cleanTitle [${option.label}].mp4"
-                        val savedUri = saveToDownloads(context, tempFile, fileName, "video/mp4")
+                        val fileName = "$cleanTitle [${option.label}].$ext"
+                        val savedUri = saveToDownloads(context, tempFile, fileName, mime)
                             ?: throw IOException("Couldn't save the video to Downloads")
                         DownloadLibrary.register(context, video, description, savedUri, fileName)
-                        showCompleteNotification(context, notificationId, title, option.label, savedUri, "video/mp4")
+                        showCompleteNotification(context, notificationId, title, option.label, savedUri, mime)
                     } finally {
                         tempFile.delete()
                     }
                 } else {
                     // Separate video and audio: download both, then mux
-                    val tempVideo = File(cacheDir, "vid_${System.currentTimeMillis()}_$cleanTitle.mp4")
-                    val tempAudio = File(cacheDir, "aud_${System.currentTimeMillis()}_$cleanTitle.m4a")
-                    val tempMuxed = File(cacheDir, "mux_${System.currentTimeMillis()}_$cleanTitle.mp4")
+                    val tempVideo = File(cacheDir, "vid_${System.currentTimeMillis()}_$cleanTitle.$ext")
+                    val tempAudio = File(cacheDir, "aud_${System.currentTimeMillis()}_$cleanTitle.$audioExt")
+                    val tempMuxed = File(cacheDir, "mux_${System.currentTimeMillis()}_$cleanTitle.$ext")
 
                     try {
                         // 1. Download video (0% -> 80%)
@@ -392,7 +414,7 @@ object VideoDownloader {
                         // 3. Mux (95% -> 100%)
                         updateProgress(96, "Muxing video & audio…")
                         val muxSuccess = runCatching {
-                            muxAudioVideo(tempVideo, tempAudio, tempMuxed)
+                            muxAudioVideo(tempVideo, tempAudio, tempMuxed, isWebm)
                         }.isSuccess
 
                         val finalFile = if (muxSuccess && tempMuxed.exists() && tempMuxed.length() > 0) {
@@ -401,11 +423,11 @@ object VideoDownloader {
                             tempVideo
                         }
 
-                        val fileName = "$cleanTitle [${option.label}].mp4"
-                        val savedUri = saveToDownloads(context, finalFile, fileName, "video/mp4")
+                        val fileName = "$cleanTitle [${option.label}].$ext"
+                        val savedUri = saveToDownloads(context, finalFile, fileName, mime)
                             ?: throw IOException("Couldn't save the video to Downloads")
                         DownloadLibrary.register(context, video, description, savedUri, fileName)
-                        showCompleteNotification(context, notificationId, title, option.label, savedUri, "video/mp4")
+                        showCompleteNotification(context, notificationId, title, option.label, savedUri, mime)
                     } finally {
                         tempVideo.delete()
                         tempAudio.delete()
@@ -416,48 +438,190 @@ object VideoDownloader {
         }
     }
 
-    @OptIn(InternalCoroutinesApi::class)
-    private suspend fun downloadFile(url: String, targetFile: File, onProgress: (bytesRead: Long, totalBytes: Long) -> Unit) = withContext(Dispatchers.IO) {
+    private const val CHUNK_SIZE = 2L * 1024L * 1024L // 2MB ranged chunks: completely bypasses YouTube CDN rate limiter!
+    private const val PARALLEL_WORKERS = 3 // 3 concurrent streams for maximum 5G / 1Gbps bandwidth saturation
+
+    private suspend fun downloadFile(
+        url: String,
+        targetFile: File,
+        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        targetFile.parentFile?.mkdirs()
+
+        // Probe total content length using a 1-byte Range request
+        var totalBytes = -1L
+        var supportsRange = false
+
+        try {
+            val probeRequest = Request.Builder()
+                .url(url)
+                .header("User-Agent", Net.USER_AGENT)
+                .header("Range", "bytes=0-0")
+                .build()
+
+            Net.client.newCall(probeRequest).execute().use { response ->
+                if (response.code == 206) {
+                    supportsRange = true
+                    val cr = response.header("Content-Range")
+                    if (cr != null && cr.contains("/")) {
+                        totalBytes = cr.substringAfter("/").trim().toLongOrNull() ?: -1L
+                    }
+                } else if (response.isSuccessful) {
+                    totalBytes = response.body?.contentLength() ?: -1L
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Range probe failed, attempting direct stream: ${e.message}")
+        }
+
+        if (!supportsRange || totalBytes <= 0) {
+            downloadDirectStream(url, targetFile, onProgress)
+            return@withContext
+        }
+
+        val chunkCount = ((totalBytes + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt()
+        val nextChunkIndex = AtomicInteger(0)
+        val downloadedBytesTotal = AtomicLong(0L)
+        val activeCalls = ConcurrentHashMap<Call, Boolean>()
+
+        val raf = RandomAccessFile(targetFile, "rw")
+        raf.setLength(totalBytes)
+        val fileChannel = raf.channel
+
+        val currentJob = currentCoroutineContext()[Job]
+        val cancellation = currentJob?.invokeOnCompletion {
+            activeCalls.keys.forEach { call -> runCatching { call.cancel() } }
+            activeCalls.clear()
+        }
+
+        try {
+            coroutineScope {
+                val workers = (0 until minOf(PARALLEL_WORKERS, chunkCount)).map {
+                    launch {
+                        val buffer = ByteArray(64 * 1024)
+                        while (isActive) {
+                            val chunkIdx = nextChunkIndex.getAndIncrement()
+                            if (chunkIdx >= chunkCount) break
+
+                            val chunkStart = chunkIdx * CHUNK_SIZE
+                            val chunkEnd = minOf(chunkStart + CHUNK_SIZE - 1, totalBytes - 1)
+                            val expectedChunkSize = chunkEnd - chunkStart + 1
+
+                            var chunkSuccess = false
+                            var attempt = 0
+
+                            while (!chunkSuccess && attempt < 5 && isActive) {
+                                attempt++
+                                try {
+                                    val chunkReq = Request.Builder()
+                                        .url(url)
+                                        .header("User-Agent", Net.USER_AGENT)
+                                        .header("Range", "bytes=$chunkStart-$chunkEnd")
+                                        .build()
+
+                                    val call = Net.client.newCall(chunkReq)
+                                    activeCalls[call] = true
+
+                                    try {
+                                        call.execute().use { resp ->
+                                            if (resp.code != 206 && resp.code != 200) {
+                                                throw IOException("Unexpected HTTP ${resp.code} for chunk $chunkIdx")
+                                            }
+                                            val stream = resp.body?.byteStream() ?: throw IOException("Empty body for chunk $chunkIdx")
+                                            var currentChunkOffset = chunkStart
+                                            var bytesReadThisChunk = 0L
+                                            var r: Int
+
+                                            while (stream.read(buffer).also { r = it } != -1) {
+                                                ensureActive()
+                                                val byteBuffer = ByteBuffer.wrap(buffer, 0, r)
+                                                while (byteBuffer.hasRemaining()) {
+                                                    val written = fileChannel.write(byteBuffer, currentChunkOffset)
+                                                    currentChunkOffset += written
+                                                }
+                                                bytesReadThisChunk += r
+                                                val currentProgress = downloadedBytesTotal.addAndGet(r.toLong())
+                                                onProgress(currentProgress, totalBytes)
+                                            }
+
+                                            if (bytesReadThisChunk == expectedChunkSize) {
+                                                chunkSuccess = true
+                                            } else {
+                                                downloadedBytesTotal.addAndGet(-bytesReadThisChunk)
+                                                throw IOException("Short chunk read: got $bytesReadThisChunk expected $expectedChunkSize")
+                                            }
+                                        }
+                                    } finally {
+                                        activeCalls.remove(call)
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    Log.w(TAG, "Chunk $chunkIdx ($chunkStart-$chunkEnd) attempt $attempt failed: ${e.message}")
+                                    if (attempt >= 5) throw e
+                                    delay(200L * attempt)
+                                }
+                            }
+                        }
+                    }
+                }
+                workers.forEach { it.join() }
+            }
+            fileChannel.force(true)
+        } finally {
+            cancellation?.dispose()
+            activeCalls.clear()
+            runCatching { fileChannel.close() }
+            runCatching { raf.close() }
+        }
+    }
+
+    private suspend fun downloadDirectStream(
+        url: String,
+        targetFile: File,
+        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
+    ) = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", Net.USER_AGENT)
             .build()
 
         val call = Net.client.newCall(request)
-        val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
-            if (cause is CancellationException) call.cancel()
+        val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion {
+            call.cancel()
         }
-        try {
-        call.execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Network error ${response.code}")
-            val body = response.body ?: throw IOException("Empty body")
-            val totalBytes = body.contentLength()
-            targetFile.parentFile?.mkdirs()
 
-            targetFile.outputStream().use { output ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    var bytesRead = 0L
-                    var read: Int
-                    while (input.read(buffer).also { read = it } != -1) {
-                        currentCoroutineContext().ensureActive()
-                        output.write(buffer, 0, read)
-                        bytesRead += read
-                        onProgress(bytesRead, totalBytes)
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Network error ${response.code}")
+                val body = response.body ?: throw IOException("Empty body")
+                val totalBytes = body.contentLength()
+                targetFile.parentFile?.mkdirs()
+
+                targetFile.outputStream().use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        var bytesRead = 0L
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            currentCoroutineContext().ensureActive()
+                            output.write(buffer, 0, read)
+                            bytesRead += read
+                            onProgress(bytesRead, totalBytes)
+                        }
+                        output.flush()
                     }
-                    output.flush()
                 }
             }
-        }
         } finally {
             cancellation?.dispose()
         }
     }
 
-    private fun muxAudioVideo(videoFile: File, audioFile: File, outputFile: File) {
+    private fun muxAudioVideo(videoFile: File, audioFile: File, outputFile: File, isWebm: Boolean = false) {
         val videoExtractor = MediaExtractor().apply { setDataSource(videoFile.absolutePath) }
         val audioExtractor = MediaExtractor().apply { setDataSource(audioFile.absolutePath) }
-        val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        val muxerFormat = if (isWebm) MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM else MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+        val muxer = MediaMuxer(outputFile.absolutePath, muxerFormat)
 
         try {
             var videoTrackIndex = -1
