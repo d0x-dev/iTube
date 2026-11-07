@@ -536,8 +536,14 @@ fun AirStreamApp() {
                 Tab.Music -> MusicScreen(
                     contentPadding = contentPadding,
                     onOpenMusic = { track, queue -> MusicPlayerState.play(track, queue) },
-                    onArtistClick = { artist -> openMusicArtist = artist },
-                    onPlaylistClick = { playlistRef -> openMusicPlaylist = playlistRef },
+                    onArtistClick = { artist ->
+                        ListeningProfile.recordArtistView(artist)
+                        openMusicArtist = artist
+                    },
+                    onPlaylistClick = { playlistRef ->
+                        ListeningProfile.recordPlaylistOrAlbumView(playlistRef)
+                        openMusicPlaylist = playlistRef
+                    },
                     onMoodsClick = { openMoodsAndGenres = true },
                     onSearch = { search.selectCategory(SearchCategory.Music); tab = Tab.Search },
                     onAccount = { accountSheet = true },
@@ -560,8 +566,14 @@ fun AirStreamApp() {
                             )
                         }
                     },
-                    onMusicArtistClick = { artist -> openMusicArtist = artist },
-                    onMusicPlaylistClick = { playlist -> openMusicPlaylist = playlist },
+                    onMusicArtistClick = { artist ->
+                        ListeningProfile.recordArtistView(artist)
+                        openMusicArtist = artist
+                    },
+                    onMusicPlaylistClick = { playlist ->
+                        ListeningProfile.recordPlaylistOrAlbumView(playlist)
+                        openMusicPlaylist = playlist
+                    },
                     onSettings = { accountSheet = true },
                     scrollToTop = scrollToTop[t] ?: 0,
                 )
@@ -709,8 +721,15 @@ fun AirStreamApp() {
                     initialThumbnail = artist.thumbnailUrl,
                     onBackClick = { openMusicArtist = null },
                     onTrackClick = { track, queue -> MusicPlayerState.play(track, queue) },
-                    onAlbumClick = { ref -> openMusicPlaylist = ref },
-                    onArtistClick = { nextArtistId -> openMusicArtist = MusicArtist(id = nextArtistId, name = "") },
+                    onAlbumClick = { ref ->
+                        ListeningProfile.recordPlaylistOrAlbumView(ref)
+                        openMusicPlaylist = ref
+                    },
+                    onArtistClick = { nextArtistId ->
+                        val a = MusicArtist(id = nextArtistId, name = "")
+                        ListeningProfile.recordArtistView(a)
+                        openMusicArtist = a
+                    },
                 )
             }
         }
@@ -729,7 +748,11 @@ fun AirStreamApp() {
                     isAlbum = pl.isAlbum,
                     onBackClick = { openMusicPlaylist = null },
                     onTrackClick = { track, queue -> MusicPlayerState.play(track, queue) },
-                    onArtistClick = { artistId -> openMusicArtist = MusicArtist(id = artistId, name = "") },
+                    onArtistClick = { artistId ->
+                        val a = MusicArtist(id = artistId, name = "")
+                        ListeningProfile.recordArtistView(a)
+                        openMusicArtist = a
+                    },
                 )
             }
         }
