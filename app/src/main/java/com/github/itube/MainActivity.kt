@@ -236,7 +236,6 @@ fun AirStreamApp() {
     var historyOpen by remember { mutableStateOf(false) }
     var openChannel by remember { mutableStateOf<String?>(null) }
     var openPublicCollection by remember { mutableStateOf<PublicCollection?>(null) }
-    // State
     var openMusicArtist by remember { mutableStateOf<MusicArtist?>(null) }
     var openMusicPlaylist by remember { mutableStateOf<MusicPlaylistRef?>(null) }
     var openMoodsAndGenres by remember { mutableStateOf(false) }
@@ -699,7 +698,7 @@ fun AirStreamApp() {
 
         // Flow Music screens: Artist, Playlist/Album, Moods & Genres
         AnimatedVisibility(
-            visible = openMusicArtist != null,
+            visible = openMusicArtist != null // artist overlay,
             enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
