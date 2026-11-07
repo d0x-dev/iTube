@@ -14,6 +14,7 @@ import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -43,6 +44,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
@@ -54,6 +56,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -62,23 +65,45 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Subscriptions
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Cancel
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.QueueMusic
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.AnimatedEqualizer
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
 import com.github.itube.ui.components.popupScrimColor
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import com.github.itube.ui.components.flowArtistShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +126,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -111,6 +139,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 // Signed in, these show the account's real feeds. Signed out, they explain what signing
 // in brings rather than showing sample content.
 
+val LocalPlaylistMenu = staticCompositionLocalOf<(PlaylistRef) -> Unit> { {} }
+
 @Composable
 fun HomeScreen(
     lib: LibraryData,
@@ -118,6 +148,7 @@ fun HomeScreen(
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
     onOpenShort: (VideoItem) -> Unit,
+    onPlayCollection: (PublicCollection) -> Unit,
     onSearch: () -> Unit,
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
@@ -135,9 +166,15 @@ fun HomeScreen(
                 lib.home,
                 contentPadding.withTop(top),
                 onOpen,
-                afterFirstVideo = {
-                    item(key = "homeShorts") {
-                        HomeShortsShelf(shorts.items, onOpenShort)
+                videoBatchSizes = listOf(3, 4),
+                afterVideoBatch = { list, batch ->
+                    list.item(key = "homeShorts-$batch") {
+                        HomeShortsShelf(shorts.items, batch, onOpenShort)
+                    }
+                    if (batch == 0 && lib.home.collections.isNotEmpty()) {
+                        list.item(key = "homeMixesAndPlaylists") {
+                            HomeCollectionsShelf(lib.home.collections, onPlayCollection)
+                        }
                     }
                 },
                 scrollToTop = scrollToTop,
@@ -166,44 +203,96 @@ fun HomeScreen(
 
 /** A compact real Shorts rail, sourced from the same InnerTube feed as the Shorts tab. */
 @Composable
-private fun HomeShortsShelf(shorts: List<VideoItem>, onOpenShort: (VideoItem) -> Unit) {
-    if (shorts.isEmpty()) return
+private fun HomeShortsShelf(shorts: List<VideoItem>, shelfIndex: Int, onOpenShort: (VideoItem) -> Unit) {
+    val shelfShorts = shorts.drop(shelfIndex * 4).take(4)
+    if (shelfShorts.isEmpty()) return
+    val menu = LocalVideoMenu.current
     Column(Modifier.padding(top = 4.dp, bottom = 6.dp)) {
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("i", color = Color(0xFFFF0000), fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
             Text("Shorts", fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
         }
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(shorts.take(14), key = { "home-short-" + it.id }) { short ->
-                Column(
-                    Modifier
-                        .width(118.dp)
-                        .clickable { onOpenShort(short) },
-                ) {
-                    Box {
-                        Thumbnail(
-                            short.thumbnail,
-                            Modifier.fillMaxWidth().aspectRatio(9f / 15f),
-                            radius = 16,
+        shelfShorts.chunked(2).forEachIndexed { rowIndex, rowShorts ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                rowShorts.forEach { short ->
+                    Box(
+                        Modifier.weight(1f)
+                            .prefetchOnPress(short.id)
+                            .pressable(pressedScale = 0.98f, onLongClick = { menu(short) }, onClick = { onOpenShort(short) })
+                            .clip(RoundedCornerShape(16.dp)),
+                    ) {
+                        Thumbnail(short.thumbnail, Modifier.fillMaxWidth().aspectRatio(0.68f), radius = 0)
+                        Box(
+                            Modifier.fillMaxSize().background(
+                                Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f)),
+                            ),
                         )
-                        DurationPill(
-                            short.durationSec,
-                            Modifier.align(Alignment.BottomEnd).padding(5.dp),
-                            small = true,
+                        if (rowIndex == 0) {
+                            Box(
+                                Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White).padding(horizontal = 8.dp, vertical = 3.dp),
+                            ) { Text("New", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                        }
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            contentDescription = "Short options",
+                            tint = Color.White,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(19.dp)
+                                .clickable { menu(short) },
+                        )
+                        Text(
+                            short.title,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            lineHeight = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 10.dp, vertical = 11.dp),
                         )
                     }
-                    Text(
-                        short.title,
-                        fontSize = 12.sp,
-                        lineHeight = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
-                    )
+                }
+                if (rowShorts.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** Real YouTube Home Mixes and playlists; selecting a card queues its actual playlist tracks. */
+@Composable
+private fun HomeCollectionsShelf(collections: List<PublicCollection>, onPlay: (PublicCollection) -> Unit) {
+    if (collections.isEmpty()) return
+    val c = MaterialTheme.colorScheme
+    Column(Modifier.padding(top = 4.dp, bottom = 10.dp)) {
+        SectionTitle("Mixes & playlists")
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(collections, key = { "home-collection-${it.url}" }) { collection ->
+                val isMix = collection.subtitle.contains("mix", ignoreCase = true) ||
+                    collection.url.substringAfter("list=", "").startsWith("RD")
+                Column(Modifier.width(190.dp).pressable(pressedScale = 0.98f, onClick = { onPlay(collection) })) {
+                    Box(Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(18.dp))) {
+                        Thumbnail(collection.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.25f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f))))
+                        Text(
+                            if (isMix) "MIX" else "PLAYLIST",
+                            Modifier.align(Alignment.TopStart).padding(9.dp).clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.58f)).padding(horizontal = 9.dp, vertical = 4.dp),
+                            color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                        )
+                        Icon(Icons.Rounded.PlayArrow, "Play ${collection.title}", tint = Color.White,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(9.dp).size(30.dp)
+                                .clip(CircleShape).background(c.primary).padding(5.dp))
+                    }
+                    Text(collection.title, Modifier.padding(top = 7.dp), color = c.onSurface, fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(if (isMix) "Play mix · all tracks" else "Play playlist · all videos", color = c.onSurfaceVariant,
+                        fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -253,13 +342,20 @@ fun SubscriptionsScreen(
 @Composable
 private fun ChannelRail(channels: List<ChannelRef>) {
     val c = MaterialTheme.colorScheme
+    val openChannel = LocalChannelOpener.current
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
     ) {
         items(channels, key = { it.id }) { ch ->
-            Column(Modifier.width(64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                Modifier
+                    .width(64.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .pressable(pressedScale = 0.94f) { openChannel(ch.id) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 ChannelAvatar(ch.avatar, ch.name, size = 56)
                 Spacer(Modifier.height(6.dp))
                 Text(ch.name, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = c.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -273,7 +369,11 @@ fun LibraryScreen(
     lib: LibraryData,
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
+    onOpenShort: (VideoItem) -> Unit = onOpen,
+    onOpenHistory: () -> Unit = {},
     onOpenPlaylist: (PlaylistRef) -> Unit,
+    onOpenDownloads: () -> Unit,
+    onOpenCollection: (PublicCollection) -> Unit,
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
     scrollToTop: Int = 0,
@@ -305,28 +405,69 @@ fun LibraryScreen(
                         action = { PillButton("Sign in with Google", onSignIn) },
                     )
                 }
-                return@LazyColumn
             }
-            item(key = "historyTitle") { SectionTitle("History") }
-            item(key = "history") {
-                val history = lib.history.videos
-                when {
-                    history.isNotEmpty() -> LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            if (signedIn) {
+                item(key = "historyTitle") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        items(history.take(20), key = { "h-" + it.id }) { video -> HistoryCard(video) { onOpen(video) } }
+                        Text(
+                            "History",
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 19.sp,
+                            letterSpacing = (-0.5).sp,
+                        )
+                        Text(
+                            "View all",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            modifier = Modifier.pressable(onClick = onOpenHistory).padding(4.dp),
+                        )
                     }
-                    lib.history.loading -> Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
-                        MaterialLoader(color = MaterialTheme.colorScheme.primary, size = 28.dp)
+                }
+                item(key = "history") {
+                    val history = lib.history.videos
+                    when {
+                        history.isNotEmpty() -> LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(history.take(20), key = { "h-" + it.id }) { video ->
+                                HistoryCard(video) {
+                                    if (video.isShortVideo) onOpenShort(video) else onOpen(video)
+                                }
+                            }
+                        }
+                        lib.history.loading -> Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+                            MaterialLoader(color = MaterialTheme.colorScheme.primary, size = 28.dp)
+                        }
+                        else -> Text(
+                            lib.history.error ?: "Nothing watched yet.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
+                            modifier = Modifier.padding(horizontal = 20.dp),
+                        )
                     }
-                    else -> Text(
-                        lib.history.error ?: "Nothing watched yet.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
-                        modifier = Modifier.padding(horizontal = 20.dp),
-                    )
                 }
             }
+            item(key = "downloadsTitle") { SectionTitle("Downloads") }
+            item(key = "downloads") {
+                PlaylistTile(
+                    PlaylistRef("DL", "Downloads", null, "${DownloadLibrary.entries.size} videos"),
+                    Modifier.fillMaxWidth(),
+                    onOpenDownloads,
+                )
+            }
+            if (SavedCollections.items.isNotEmpty()) {
+                item(key = "savedCollectionsTitle") { SectionTitle("Saved collections") }
+                items(SavedCollections.items, key = { "saved-collection-${it.url}" }) { collection ->
+                    PublicCollectionRow(collection, onOpenCollection)
+                }
+            }
+            if (!signedIn) return@LazyColumn
             item(key = "playlistsTitle") { SectionTitle("Playlists") }
             val pinned = listOf(
                 PlaylistRef("WL", "Watch later", null, null),
@@ -359,16 +500,19 @@ private fun HistoryCard(video: VideoItem, onClick: () -> Unit) {
 @Composable
 private fun PlaylistTile(playlist: PlaylistRef, modifier: Modifier, onClick: () -> Unit) {
     val c = MaterialTheme.colorScheme
+    val openOptions = LocalPlaylistMenu.current
+    val canManage = playlist.id !in setOf("WL", "LL", "DL")
     val shape = RoundedCornerShape(26.dp)
     val (icon, tone) = when (playlist.id) {
         "WL" -> Icons.Rounded.WatchLater to c.primaryContainer
         "LL" -> Icons.Rounded.ThumbUp to c.tertiaryContainer
+        "DL" -> Icons.Rounded.Download to c.primaryContainer
         else -> Icons.AutoMirrored.Rounded.PlaylistPlay to c.secondaryContainer
     }
     Column(
         modifier = modifier
             .height(132.dp)
-            .pressable(pressedScale = 0.97f, onClick = onClick)
+            .pressable(pressedScale = 0.97f, onLongClick = { if (canManage) openOptions(playlist) }, onClick = onClick)
             .clip(shape)
             .background(c.surfaceContainerLow)
             .padding(14.dp),
@@ -388,11 +532,267 @@ private fun PlaylistTile(playlist: PlaylistRef, modifier: Modifier, onClick: () 
     }
 }
 
-/** A playlist's videos (Watch later, Liked, or the user's own). */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlaylistScreen(playlist: PlaylistRef, feed: FeedState, contentPadding: PaddingValues, onBack: () -> Unit, onOpen: (VideoItem) -> Unit) {
+fun PlaylistOptionsSheet(
+    playlist: PlaylistRef,
+    onDismiss: () -> Unit,
+    onDelete: (PlaylistRef) -> Unit,
+    onReload: (PlaylistRef) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var confirmDelete by remember(playlist.id) { mutableStateOf(false) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = c.surfaceContainerHigh,
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)).background(c.surfaceContainerHighest), contentAlignment = Alignment.Center) {
+                if (playlist.thumbnail != null) Thumbnail(playlist.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                else Icon(Icons.AutoMirrored.Rounded.PlaylistPlay, null, tint = c.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(playlist.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                playlist.subtitle?.let { Text(it, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+        }
+        PlaylistAction(Icons.Rounded.Refresh, "Refresh") { onReload(playlist); onDismiss() }
+        if (playlist.id !in setOf("WL", "LL", "DL")) {
+            PlaylistAction(Icons.Rounded.Share, "Share playlist") {
+                shareLink(context, "https://www.youtube.com/playlist?list=${playlist.id}", playlist.title)
+                onDismiss()
+            }
+            PlaylistAction(Icons.Rounded.Delete, "Delete playlist", c.error) { confirmDelete = true }
+        }
+        Spacer(Modifier.height(18.dp))
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete playlist?") },
+            text = { Text("“${playlist.title}” will be deleted from your YouTube account.") },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete(playlist) }) { Text("Delete", color = c.error) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        )
+    }
+}
+
+@Composable
+private fun PlaylistAction(icon: ImageVector, title: String, tint: Color = MaterialTheme.colorScheme.onSurface, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().pressable(pressedScale = 0.98f, onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(18.dp))
+        Text(title, color = tint, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    }
+}
+
+/** Videos saved into Downloads/iTube; opening a row uses its stored file URI and stored metadata. */
+@Composable
+fun DownloadsScreen(
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onOpen: (DownloadedVideo) -> Unit,
+) {
+    val downloads = DownloadLibrary.entries
+    val active = DownloadLibrary.activeDownloads
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+    CollapsingHeaderLayout(
+        resetKey = downloads.size + active.size,
+        header = {
+            Row(
+                Modifier.fillMaxWidth().statusBarsPadding().padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircleAction(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+                Spacer(Modifier.width(12.dp))
+                Text("Downloads", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+            }
+        },
+    ) { top ->
+        if (downloads.isEmpty() && active.isEmpty()) {
+            Box(Modifier.fillMaxSize().padding(top = top), contentAlignment = Alignment.Center) {
+                EmptyState(Icons.Rounded.Download, "No downloads yet", "Videos you download will appear here and play offline.")
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = contentPadding.withTop(top)) {
+                if (active.isNotEmpty()) {
+                    item { SectionTitle("Downloading") }
+                    items(active, key = { "active-download-${it.id}" }) { task ->
+                        ActiveDownloadRow(task) { VideoDownloader.cancel(context, task.id) }
+                    }
+                }
+                if (downloads.isNotEmpty()) {
+                    item { SectionTitle("Downloaded videos") }
+                    items(downloads, key = { "download-" + it.item.id }) { download ->
+                        DownloadedVideoRow(download) { onOpen(download) }
+                    }
+                }
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun ActiveDownloadRow(download: ActiveDownload, onCancel: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(112.dp).aspectRatio(16f / 9f)) {
+            Thumbnail(download.item.thumbnail, Modifier.fillMaxSize(), radius = 14)
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 6.dp, vertical = 5.dp)) {
+                if (download.progress == null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                } else {
+                    LinearProgressIndicator(progress = { download.progress.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(download.item.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp))
+            Text(download.status, color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = onCancel) { Icon(Icons.Rounded.Cancel, contentDescription = "Cancel download", tint = c.error) }
+    }
+}
+
+@Composable
+private fun DownloadedVideoRow(download: DownloadedVideo, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().pressable(pressedScale = 0.98f, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(132.dp).aspectRatio(16f / 9f)) {
+            Thumbnail(download.item.thumbnail, Modifier.fillMaxSize(), radius = 16)
+            DurationPill(download.item.durationSec, Modifier.align(Alignment.BottomEnd).padding(6.dp), small = true)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(download.item.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp))
+            Text(download.item.channel, color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(
+                    download.item.views.takeIf { it >= 0 }?.let { "${formatCount(it)} views" },
+                    download.item.uploaded,
+                ).joinDots().ifBlank { "Downloaded" },
+                color = c.onSurfaceVariant,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Dedicated full history screen with pagination, Shorts shelf, and smooth navigation. */
+@Composable
+fun HistoryScreen(
+    lib: LibraryData,
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onOpen: (VideoItem) -> Unit,
+    onOpenShort: (VideoItem) -> Unit = onOpen,
+) {
+    val feed = lib.history
+    val videoMenu = LocalVideoMenu.current
+    LaunchedEffect(Unit) { feed.ensureLoaded() }
+    val historyShorts = remember(feed.videos) { feed.videos.filter { it.isShortVideo } }
+    val regularVideos = remember(feed.videos, historyShorts) {
+        if (historyShorts.isNotEmpty()) feed.videos.filterNot { it.isShortVideo } else feed.videos
+    }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+        CollapsingHeaderLayout(
+            resetKey = feed.generation,
+            header = {
+                Row(
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(start = 12.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircleAction(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "History",
+                        fontFamily = RoundedHeavy,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 24.sp,
+                        letterSpacing = (-0.8).sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            },
+        ) { top ->
+            if (feed.videos.isEmpty() && !feed.loading && feed.error == null) {
+                Box(Modifier.fillMaxSize().padding(top = top), contentAlignment = Alignment.Center) {
+                    EmptyState(Icons.Rounded.History, "No watch history", "Videos and shorts you watch will appear here.")
+                }
+            } else {
+                FeedList(
+                    feed = feed,
+                    contentPadding = contentPadding.withTop(top),
+                    videosOverride = if (historyShorts.isNotEmpty()) regularVideos else null,
+                    onOpen = { video -> if (video.isShortVideo) onOpenShort(video) else onOpen(video) },
+                    header = {
+                        if (historyShorts.isNotEmpty()) {
+                            item(key = "history-shorts-shelf") {
+                                PlaylistShortsShelf(shorts = historyShorts, onOpenShort = onOpenShort, onVideoLongPress = videoMenu)
+                            }
+                        }
+                    },
+                    indicatorTop = top,
+                )
+            }
+        }
+    }
+}
+
+/** A playlist's tracks stay separate from YouTube's recommendation shelf. */
+@Composable
+fun PlaylistScreen(
+    playlist: PlaylistRef,
+    feed: FeedState,
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onOpen: (VideoItem) -> Unit,
+    onOpenShort: (VideoItem) -> Unit = onOpen,
+    onPlayPlaylist: (List<VideoItem>, Int) -> Unit = { videos, index -> videos.getOrNull(index)?.let(onOpen) },
+    onVideoLongPress: ((VideoItem) -> Unit)? = null,
+) {
+    val parentVideoMenu = LocalVideoMenu.current
+    val videoMenu = LocalVideoMenu.current
+    val playlistMenu = LocalPlaylistMenu.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val savedShorts = playlist.title.contains("short", ignoreCase = true)
+    val isLikedVideos = playlist.id == "LL" || playlist.title.contains("Liked", ignoreCase = true)
+    val likedShorts = remember(feed.videos, isLikedVideos) {
+        if (isLikedVideos) feed.videos.filter { it.isShortVideo } else emptyList()
+    }
+    val regularVideos = remember(feed.videos, isLikedVideos, likedShorts) {
+        if (isLikedVideos && likedShorts.isNotEmpty()) feed.videos.filterNot { it.isShortVideo } else feed.videos
+    }
+    fun playPlaylistItem(video: VideoItem) {
+        scope.launch {
+            val all = feed.loadAllVideos()
+            val playlistVideos = if (isLikedVideos && likedShorts.isNotEmpty()) all.filterNot { it.isShortVideo } else all
+            val index = playlistVideos.indexOfFirst { it.id == video.id }
+            if (index >= 0) onPlayPlaylist(playlistVideos, index) else onOpen(video)
+        }
+    }
     LaunchedEffect(playlist.id) { feed.ensureLoaded() }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+    CompositionLocalProvider(LocalVideoMenu provides { video -> onVideoLongPress?.invoke(video) ?: parentVideoMenu(video) }) {
     CollapsingHeaderLayout(
         resetKey = feed.generation,
         header = {
@@ -405,17 +805,429 @@ fun PlaylistScreen(playlist: PlaylistRef, feed: FeedState, contentPadding: Paddi
             Text(
                 playlist.title,
                 fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, letterSpacing = (-0.8).sp,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
+            IconButton(onClick = { playlistMenu(playlist) }) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = "Playlist options", tint = MaterialTheme.colorScheme.onSurface)
+            }
         }
         },
     ) { top ->
-        if (feed.videos.isEmpty() && !feed.loading && feed.error == null && !feed.hasMore) {
+        val showShortsGrid = savedShorts || (isLikedVideos && regularVideos.isEmpty() && likedShorts.isNotEmpty())
+        if (feed.videos.isEmpty() && feed.recommendations.isEmpty() && !feed.loading && feed.error == null && !feed.hasMore) {
             Box(Modifier.padding(top = top)) { EmptyState(Icons.Rounded.VideoLibrary, "Nothing here yet", "Videos you add to this playlist will show up here.") }
+        } else if (showShortsGrid) {
+            val shortsList = if (savedShorts) feed.videos else likedShorts
+            val listState = rememberLazyListState()
+            val nearEnd by remember(listState, shortsList.size) {
+                derivedStateOf { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= listState.layoutInfo.totalItemsCount - 3 } == true }
+            }
+            LaunchedEffect(nearEnd, shortsList.size) { if (nearEnd && feed.hasMore && !feed.loading) feed.loadMore() }
+            LazyColumn(state = listState, contentPadding = contentPadding.withTop(top)) {
+                item(key = "playlist-actions") {
+                    PlaylistPlaybackActions(
+                        count = shortsList.size,
+                        onPlay = { shortsList.firstOrNull()?.let(onOpenShort) },
+                        onShuffle = { shortsList.shuffled().firstOrNull()?.let(onOpenShort) },
+                    )
+                }
+                items(shortsList.chunked(2), key = { row -> row.joinToString(prefix = "shorts-") { it.id } }) { row ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { short ->
+                            Box(
+                                Modifier.weight(1f).prefetchOnPress(short.id)
+                                    .pressable(pressedScale = 0.98f, onLongClick = { videoMenu(short) }, onClick = { onOpenShort(short) })
+                                    .clip(RoundedCornerShape(18.dp)),
+                            ) {
+                                Thumbnail(short.thumbnail, Modifier.fillMaxWidth().aspectRatio(0.68f), radius = 0)
+                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.74f))))
+                                Text(short.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp))
+                            }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+                if (feed.loading) item { Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) { MaterialLoader(color = MaterialTheme.colorScheme.primary, size = 26.dp) } }
+            }
         } else {
-            FeedList(feed, contentPadding.withTop(top), onOpen, indicatorTop = top)
+            val displayVideos = if (likedShorts.isNotEmpty()) regularVideos else feed.videos
+            FeedList(
+                feed = feed,
+                contentPadding = contentPadding.withTop(top),
+                videosOverride = if (likedShorts.isNotEmpty()) regularVideos else null,
+                onOpen = { video ->
+                    if (video.isShortVideo) {
+                        onOpenShort(video)
+                    } else if (feed.videos.any { it.id == video.id }) {
+                        playPlaylistItem(video)
+                    } else {
+                        onOpen(video)
+                    }
+                },
+                header = {
+                    item(key = "playlist-actions") {
+                        PlaylistPlaybackActions(
+                            count = displayVideos.size,
+                            onPlay = {
+                                scope.launch {
+                                    val all = if (likedShorts.isNotEmpty()) feed.loadAllVideos().filterNot { it.isShortVideo } else feed.loadAllVideos()
+                                    onPlayPlaylist(all, 0)
+                                }
+                            },
+                            onShuffle = {
+                                scope.launch {
+                                    val all = (if (likedShorts.isNotEmpty()) feed.loadAllVideos().filterNot { it.isShortVideo } else feed.loadAllVideos()).shuffled()
+                                    onPlayPlaylist(all, 0)
+                                }
+                            },
+                        )
+                    }
+                    if (likedShorts.isNotEmpty()) {
+                        item(key = "playlist-shorts-shelf") {
+                            PlaylistShortsShelf(
+                                shorts = likedShorts,
+                                onOpenShort = onOpenShort,
+                                onVideoLongPress = { video -> onVideoLongPress?.invoke(video) ?: parentVideoMenu(video) },
+                            )
+                        }
+                    }
+                    if (displayVideos.isEmpty() && feed.recommendations.isNotEmpty()) {
+                        item(key = "playlist-empty-tip") {
+                            Column(
+                                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Icon(Icons.Rounded.VideoLibrary, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text("No videos in this playlist yet", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text("Add some from the recommendations below to get started", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
+                },
+                indicatorTop = top,
+                footer = {
+                    if ((!feed.hasMore || displayVideos.isEmpty()) && feed.recommendations.isNotEmpty()) {
+                        item(key = "playlist-recommended-title") {
+                            PlaylistRecommendationsHeader(count = feed.recommendations.size)
+                        }
+                        items(feed.recommendations, key = { "playlist-recommendation-${it.id}" }) { video ->
+                            RecommendedVideoRow(
+                                video = video,
+                                onOpen = {
+                                    if (video.isShortVideo) onOpenShort(video) else onOpen(video)
+                                },
+                                onAdd = {
+                                    feed.addPlaylistVideo(playlist.id, video)
+                                },
+                                onMenu = { videoMenu(video) },
+                            )
+                        }
+                    }
+                },
+            )
         }
     }
+    }
+    }
+}
+
+@Composable
+private fun PlaylistShortsShelf(
+    shorts: List<VideoItem>,
+    onOpenShort: (VideoItem) -> Unit,
+    onVideoLongPress: (VideoItem) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF0000)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Shorts",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.3).sp,
+                )
+            }
+            Text(
+                "${shorts.size} shorts",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = c.onSurfaceVariant,
+            )
+        }
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(shorts, key = { "playlist-short-${it.id}" }) { short ->
+                Box(
+                    Modifier
+                        .width(136.dp)
+                        .aspectRatio(0.64f)
+                        .prefetchOnPress(short.id)
+                        .pressable(
+                            pressedScale = 0.96f,
+                            onLongClick = { onVideoLongPress(short) },
+                            onClick = { onOpenShort(short) },
+                        )
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.surfaceContainerHigh),
+                ) {
+                    Thumbnail(short.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                    Box(
+                        Modifier.fillMaxSize().background(
+                            Brush.verticalGradient(
+                                0.4f to Color.Transparent,
+                                1f to Color.Black.copy(alpha = 0.85f),
+                            ),
+                        ),
+                    )
+                    IconButton(
+                        onClick = { onVideoLongPress(short) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(28.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            contentDescription = "Options",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    Text(
+                        short.title,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 16.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(10.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistRecommendationsHeader(count: Int) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp, bottom = 12.dp)
+            .padding(horizontal = 16.dp),
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            color = c.outlineVariant.copy(alpha = 0.4f),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(c.secondaryContainer),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = c.onSecondaryContainer,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Recommended",
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 18.sp,
+                            letterSpacing = (-0.3).sp,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(c.tertiaryContainer)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                "SUGGESTIONS",
+                                color = c.onTertiaryContainer,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp,
+                            )
+                        }
+                    }
+                    Text(
+                        "Based on videos in this playlist",
+                        fontSize = 12.sp,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+            }
+            if (count > 0) {
+                Text(
+                    "$count",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = c.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecommendedVideoRow(
+    video: VideoItem,
+    onOpen: () -> Unit,
+    onAdd: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.surfaceContainerLow)
+            .prefetchOnPress(video.id)
+            .pressable(pressedScale = 0.98f, onLongClick = onMenu, onClick = onOpen)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(120.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(10.dp)),
+        ) {
+            Thumbnail(video.thumbnail, Modifier.fillMaxSize(), radius = 0)
+            DurationPill(video.durationSec, Modifier.align(Alignment.BottomEnd).padding(4.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(c.tertiaryContainer.copy(alpha = 0.85f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    "Recommendation",
+                    color = c.onTertiaryContainer,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.2.sp,
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                video.title,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = c.onSurface,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                metaLine(video.channel, video.views, video.uploaded),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        IconButton(
+            onClick = onAdd,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(c.primaryContainer),
+        ) {
+            Icon(
+                Icons.Rounded.Add,
+                contentDescription = "Add to playlist",
+                tint = c.onPrimaryContainer,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        IconButton(
+            onClick = onMenu,
+            modifier = Modifier.size(32.dp),
+        ) {
+            Icon(
+                Icons.Rounded.MoreVert,
+                contentDescription = "Options",
+                tint = c.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistPlaybackActions(count: Int, onPlay: () -> Unit, onShuffle: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        PlaylistActionButton("Play all", Icons.Rounded.PlayArrow, Modifier.weight(1f), onPlay)
+        PlaylistActionButton("Shuffle", Icons.Rounded.Shuffle, Modifier.weight(1f), onShuffle)
+        if (count > 0) Text("$count", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp, vertical = 14.dp), fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun PlaylistActionButton(label: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        modifier.clip(CircleShape).background(c.secondaryContainer).pressable(pressedScale = 0.97f, onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = c.onSecondaryContainer, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(7.dp))
+        Text(label, color = c.onSecondaryContainer, fontWeight = FontWeight.Bold, fontSize = 14.sp)
     }
 }
 
@@ -436,6 +1248,8 @@ enum class SearchCategory {
     Videos,
     Music,
 }
+
+enum class MusicSearchFilter { Songs, Artists, Albums, Playlists }
 
 /** Lives above the tab switcher so results survive switching tabs. */
 @Stable
@@ -471,6 +1285,12 @@ class SearchState(private val scope: CoroutineScope) {
     var musicGeneration by mutableStateOf(0)
         private set
     private var musicJob: Job? = null
+    var musicFilter by mutableStateOf(MusicSearchFilter.Songs)
+        private set
+    var musicArtistResults by mutableStateOf<List<MusicArtist>>(emptyList())
+        private set
+    var musicPlaylistResults by mutableStateOf<List<MusicPlaylistRef>>(emptyList())
+        private set
     var suggestions by mutableStateOf<List<String>>(emptyList())
         private set
     private var suggestionsJob: Job? = null
@@ -507,6 +1327,12 @@ class SearchState(private val scope: CoroutineScope) {
         if (category == SearchCategory.Videos && query.trim().isNotEmpty()) submit()
     }
 
+    fun selectMusicFilter(newFilter: MusicSearchFilter) {
+        if (musicFilter == newFilter) return
+        musicFilter = newFilter
+        if (category == SearchCategory.Music && musicSubmitted.isNotEmpty()) submitMusic()
+    }
+
     fun submit() {
         val q = query.trim()
         if (q.isEmpty()) return
@@ -524,15 +1350,35 @@ class SearchState(private val scope: CoroutineScope) {
             }
         } else {
             musicSubmitted = q
-            musicLoading = true
-            musicError = null
-            musicJob?.cancel()
-            musicJob = scope.launch {
-                runCatching { MusicBackend.searchMusic(q) }
-                    .onSuccess { musicResults = it; musicGeneration++ }
-                    .onFailure { musicError = it.localizedMessage ?: "Failed to search music" }
-                musicLoading = false
-            }
+            submitMusic()
+        }
+    }
+
+    private fun submitMusic() {
+        musicLoading = true
+        musicError = null
+        musicJob?.cancel()
+        musicResults = emptyList()
+        musicArtistResults = emptyList()
+        musicPlaylistResults = emptyList()
+        musicJob = scope.launch {
+            runCatching {
+                when (musicFilter) {
+                    MusicSearchFilter.Songs -> {
+                        musicResults = MusicBackend.searchMusic(musicSubmitted)
+                    }
+                    MusicSearchFilter.Artists -> {
+                        musicArtistResults = MusicBackend.searchArtists(musicSubmitted)
+                    }
+                    MusicSearchFilter.Albums -> {
+                        musicPlaylistResults = MusicBackend.searchAlbums(musicSubmitted)
+                    }
+                    MusicSearchFilter.Playlists -> {
+                        musicPlaylistResults = MusicBackend.searchPlaylists(musicSubmitted)
+                    }
+                }
+            }.onFailure { musicError = it.localizedMessage ?: "Failed to search music" }
+            musicLoading = false
         }
     }
 }
@@ -544,6 +1390,8 @@ fun SearchScreen(
     contentPadding: PaddingValues,
     onOpen: (VideoItem) -> Unit,
     onOpenResult: (SearchResult) -> Unit,
+    onMusicArtistClick: (MusicArtist) -> Unit = {},
+    onMusicPlaylistClick: (MusicPlaylistRef) -> Unit = {},
     onSettings: () -> Unit,
     scrollToTop: Int = 0,
 ) {
@@ -718,6 +1566,28 @@ fun SearchScreen(
                 }
             }
         }
+        // iMusic filter chips (only when Music tab selected)
+        if (state.category == SearchCategory.Music) {
+            LazyRow(
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(MusicSearchFilter.entries.toList()) { filter ->
+                    val selected = state.musicFilter == filter
+                    FilterChip(
+                        selected = selected,
+                        onClick = { state.selectMusicFilter(filter) },
+                        label = { Text(filter.name, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = c.primary,
+                            selectedLabelColor = c.onPrimary,
+                        ),
+                        shape = CircleShape,
+                        border = null,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(6.dp))
         } },
     ) { top ->
@@ -769,8 +1639,13 @@ fun SearchScreen(
                     }
                 }
             } else {
-                // Music Search Results (AirBeats style)
-                val listShown = showHistory || (state.musicResults.isNotEmpty() && state.musicError == null)
+                // Music Search Results (AirBeats / Flow style with Filter Tabs)
+                val hasResults = when (state.musicFilter) {
+                    MusicSearchFilter.Songs -> state.musicResults.isNotEmpty()
+                    MusicSearchFilter.Artists -> state.musicArtistResults.isNotEmpty()
+                    MusicSearchFilter.Albums, MusicSearchFilter.Playlists -> state.musicPlaylistResults.isNotEmpty()
+                }
+                val listShown = showHistory || (hasResults && state.musicError == null)
                 Box(Modifier.padding(top = if (listShown) 0.dp else top)) {
                     when {
                         showHistory -> SearchHistoryList(
@@ -778,7 +1653,7 @@ fun SearchScreen(
                             contentPadding = contentPadding.withTop(top),
                             onSearch = { state.query = it; submit() },
                         )
-                        state.musicLoading && state.musicResults.isEmpty() -> Box(Modifier.fillMaxWidth().padding(top = 48.dp), Alignment.Center) {
+                        state.musicLoading && !hasResults -> Box(Modifier.fillMaxWidth().padding(top = 48.dp), Alignment.Center) {
                             MaterialLoader(color = c.primary, size = 36.dp)
                         }
                         state.musicError != null -> EmptyState(
@@ -790,24 +1665,126 @@ fun SearchScreen(
                         state.musicSubmitted.isEmpty() -> EmptyState(
                             icon = Icons.Rounded.MusicNote,
                             title = "Search YouTube Music",
-                            body = "Stream songs, albums, and artists with synchronized lyrics and lossless artwork.",
+                            body = "Search for songs, artists, albums, and playlists.",
                         )
-                        state.musicResults.isEmpty() -> EmptyState(
+                        !hasResults -> EmptyState(
                             icon = Icons.Rounded.SearchOff,
-                            title = "No songs found",
-                            body = "No music tracks matched “${state.musicSubmitted}”.",
+                            title = when (state.musicFilter) {
+                                MusicSearchFilter.Songs -> "No songs found"
+                                MusicSearchFilter.Artists -> "No artists found"
+                                MusicSearchFilter.Albums -> "No albums found"
+                                MusicSearchFilter.Playlists -> "No playlists found"
+                            },
+                            body = "No results matched “${state.musicSubmitted}”.",
                         )
                         else -> {
                             val list = rememberScrollToTop(scrollToTop)
                             LaunchedEffect(state.musicGeneration) { list.scrollToItem(0) }
-                            LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
-                                items(state.musicResults, key = { it.id }) { track ->
-                                    MusicSearchTrackRow(
-                                        track = track,
-                                        onClick = {
-                                            MusicPlayerState.play(track, null)
+                            when (state.musicFilter) {
+                                MusicSearchFilter.Songs -> {
+                                    LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
+                                        items(state.musicResults, key = { it.id }) { track ->
+                                            MusicSearchTrackRow(
+                                                track = track,
+                                                onClick = {
+                                                    MusicPlayerState.play(track, null)
+                                                }
+                                            )
                                         }
-                                    )
+                                    }
+                                }
+                                MusicSearchFilter.Artists -> {
+                                    val artistShape = flowArtistShape()
+                                    LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
+                                        items(state.musicArtistResults, key = { it.id }) { artist ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { onMusicArtistClick(artist) }
+                                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(56.dp)
+                                                        .clip(artistShape)
+                                                        .background(c.surfaceContainerHigh),
+                                                ) {
+                                                    AsyncImage(
+                                                        model = artist.thumbnailUrl,
+                                                        contentDescription = artist.name,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                    )
+                                                }
+                                                Spacer(Modifier.width(16.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = artist.name,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 16.sp,
+                                                        color = c.onBackground,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                    Spacer(Modifier.height(2.dp))
+                                                    Text(
+                                                        text = artist.subscribers ?: "Artist",
+                                                        fontSize = 13.sp,
+                                                        color = c.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                MusicSearchFilter.Albums, MusicSearchFilter.Playlists -> {
+                                    LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
+                                        items(state.musicPlaylistResults, key = { it.id }) { item ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { onMusicPlaylistClick(item) }
+                                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(56.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(c.surfaceContainerHigh),
+                                                ) {
+                                                    AsyncImage(
+                                                        model = item.thumbnailUrl,
+                                                        contentDescription = item.title,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                    )
+                                                }
+                                                Spacer(Modifier.width(16.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = item.title,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 15.sp,
+                                                        color = c.onBackground,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                    Spacer(Modifier.height(2.dp))
+                                                    Text(
+                                                        text = item.author.ifBlank { if (item.isAlbum) "Album" else "Playlist" },
+                                                        fontSize = 13.sp,
+                                                        color = c.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

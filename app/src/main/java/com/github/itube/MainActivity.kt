@@ -120,6 +120,11 @@ import kotlin.math.roundToInt
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import com.github.itube.ui.screens.MusicScreen
+import com.github.itube.ui.screens.iMusicArtistScreen
+import com.github.itube.ui.screens.iMusicPlaylistScreen
+import com.github.itube.ui.screens.iMusicMoodsAndGenresScreen
+import com.github.itube.MusicArtist
+import com.github.itube.MusicPlaylistRef
 import com.github.itube.ui.player.NewClassicMiniPlayer
 import com.github.itube.ui.player.IosStyledPlayer
 import com.github.itube.ui.player.LyricsV2Screen
@@ -127,6 +132,8 @@ import com.github.itube.ui.player.MusicQueueSheet
 
 class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    var openDownloadsRequest by mutableStateOf(0)
+        private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,6 +151,7 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         NewVideos.takeVideo(intent)?.let { NewVideos.opening = it }
+        handleDownloadsIntent(intent)
         MusicPlayerState.init(this)
         setContent { AirStreamTheme { AirStreamApp() } }
     }
@@ -151,7 +159,16 @@ class MainActivity : ComponentActivity() {
     /** A new-video notification tapped while this window is open (singleTop). */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         NewVideos.takeVideo(intent)?.let { NewVideos.opening = it }
+        handleDownloadsIntent(intent)
+    }
+
+    private fun handleDownloadsIntent(intent: Intent) {
+        if (intent.action == ACTION_OPEN_DOWNLOADS) {
+            openDownloadsRequest++
+            setIntent(Intent(intent).setAction(null))
+        }
     }
 
     override fun onStart() {
@@ -170,6 +187,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val ACTION_OPEN_DOWNLOADS = "com.github.itube.action.OPEN_DOWNLOADS"
         private var current: WeakReference<MainActivity>? = null
 
         /** The task of the app's open window; null when there's none (closed, or on its way out). */
@@ -193,6 +211,8 @@ private val MiniGap = 8.dp
 @Composable
 fun AirStreamApp() {
     val c = MaterialTheme.colorScheme
+    val hostActivity = LocalContext.current as? MainActivity
+    val openDownloadsRequest = hostActivity?.openDownloadsRequest ?: 0
     val player = rememberPlayerState()
     val scope = rememberCoroutineScope()
     val search = remember { SearchState(scope) }
@@ -212,13 +232,25 @@ fun AirStreamApp() {
         }
     }
     var openPlaylist by remember { mutableStateOf<PlaylistRef?>(null) }
+    var downloadsOpen by remember { mutableStateOf(false) }
+    var historyOpen by remember { mutableStateOf(false) }
     var openChannel by remember { mutableStateOf<String?>(null) }
     var openPublicCollection by remember { mutableStateOf<PublicCollection?>(null) }
+    var openMusicArtist by remember { mutableStateOf<MusicArtist?>(null) }
+    var openMusicPlaylist by remember { mutableStateOf<MusicPlaylistRef?>(null) }
+    var openMoodsAndGenres by remember { mutableStateOf(false) }
     // Kept after closing so the page can slide out with its content.
     var channelState by remember { mutableStateOf<ChannelState?>(null) }
     var publicCollectionState by remember { mutableStateOf<PublicCollectionState?>(null) }
     val playlistFeed = remember(openPlaylist?.id) { openPlaylist?.let { lib.playlistFeed(it.id) } }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    LaunchedEffect(openDownloadsRequest) {
+        if (openDownloadsRequest > 0) {
+            openPlaylist = null
+            tab = Tab.Library
+            downloadsOpen = true
+        }
+    }
     // Shorts: its own feed and players; ‹ (and Back) return to the tab it was opened from.
     // One per process (AirStreamApplication), so its bank keeps filling with no window open.
     val shorts = (LocalContext.current.applicationContext as AirStreamApplication).shorts
@@ -282,6 +314,9 @@ fun AirStreamApp() {
     val stackBottom = navBottom.coerceAtLeast(8.dp) +
         if (WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding() > 0.dp) 10.dp else 0.dp
     var optionsFor by remember { mutableStateOf<VideoItem?>(null) }
+    var optionsPlaylistFor by remember { mutableStateOf<PlaylistRef?>(null) }
+    var playlistOptionsFor by remember { mutableStateOf<PlaylistRef?>(null) }
+    var collectionOptionsFor by remember { mutableStateOf<PublicCollection?>(null) }
     val playerOpen = player.current != null && player.expanded
     // On Shorts the app's video waits, paused, out of sight (no mini-player).
     val hasMini = player.current != null && tab != Tab.Shorts
@@ -309,13 +344,20 @@ fun AirStreamApp() {
     SystemBarsHidden(showFullscreen)
     // A vertical video's fullscreen stays upright (Fullscreen.kt).
     fun toggleFullscreen() = if (showFullscreen) orientation.exitFullscreen() else orientation.enterFullscreen(vertical = player.videoAspect < 1f)
+    // Pulling down from the details area always enters Flow-style portrait fullscreen.
+    fun enterPortraitFullscreen() = orientation.enterFullscreen(vertical = true)
 
     BackHandler(enabled = player.expanded) { player.expanded = false }
     BackHandler(enabled = !player.expanded && tab != Tab.Home && openPlaylist == null) { tab = if (tab == Tab.Shorts) shortsFrom else Tab.Home }
     BackHandler(enabled = !player.expanded && openPlaylist != null) { openPlaylist = null }
+    BackHandler(enabled = !player.expanded && downloadsOpen) { downloadsOpen = false }
+    BackHandler(enabled = !player.expanded && historyOpen) { historyOpen = false }
     BackHandler(enabled = !player.expanded && openPublicCollection != null) { openPublicCollection = null }
     BackHandler(enabled = signingIn) { signingIn = false }
     BackHandler(enabled = !player.expanded && openChannel != null) { openChannel = null }
+    BackHandler(enabled = !player.expanded && openMusicArtist != null) { openMusicArtist = null }
+    BackHandler(enabled = !player.expanded && openMusicPlaylist != null) { openMusicPlaylist = null }
+    BackHandler(enabled = !player.expanded && openMoodsAndGenres) { openMoodsAndGenres = false }
     BackHandler(enabled = tab == Tab.Shorts && shorts.commentsOpen) { shorts.commentsOpen = false }
     // Registered last so it wins: in fullscreen, Back returns to the portrait player first.
     BackHandler(enabled = showFullscreen) { orientation.exitFullscreen() }
@@ -367,6 +409,7 @@ fun AirStreamApp() {
     SideEffect {
         StatusBarOverVideo.shorts = tab == Tab.Shorts && openChannel == null
         shorts.onMessage = { player.actionMessage = it }
+        shorts.onSavedShortsChanged = { lib.loadPlaylists() }
         shorts.mainBusy = { player.isBuffering }
     }
 
@@ -443,8 +486,10 @@ fun AirStreamApp() {
             LocalVideoSurface provides if (pip.active) NoVideoSurface else sharedSurface,
             LocalPictureInPicture provides pip,
             LocalVideoMenu provides { optionsFor = it },
+            LocalPlaylistMenu provides { playlistOptionsFor = it },
             LocalChannelOpener provides { url -> showChannel(url) },
             LocalCollectionOpener provides { collection -> showPublicCollection(collection) },
+            LocalCollectionMenu provides { collection -> collectionOptionsFor = collection },
         ) {
         val popupBlurRadius by animateDpAsState(
             targetValue = if (BlurPopupState.isBlurActive) 22.dp else 0.dp,
@@ -473,6 +518,17 @@ fun AirStreamApp() {
                         shorts.openFromHome(short.id)
                         tab = Tab.Shorts
                     },
+                    onPlayCollection = { collection ->
+                        scope.launch {
+                            player.actionMessage = "Loading ${collection.title}…"
+                            runCatching { YouTube.publicCollection(collection.url, collection.isAlbum).videos }
+                                .onSuccess { videos ->
+                                    if (videos.isEmpty()) player.actionMessage = "This playlist has no playable videos."
+                                    else player.openPlaylist(videos, 0)
+                                }
+                                .onFailure { player.actionMessage = "Couldn't load ${collection.title}." }
+                        }
+                    },
                     onSearch = { search.selectCategory(SearchCategory.Videos); tab = Tab.Search },
                     onSignIn = { signingIn = true }, onAccount = { accountSheet = true },
                     scrollToTop = scrollToTop[Tab.Home] ?: 0,
@@ -480,6 +536,9 @@ fun AirStreamApp() {
                 Tab.Music -> MusicScreen(
                     contentPadding = contentPadding,
                     onOpenMusic = { track, queue -> MusicPlayerState.play(track, queue) },
+                    onArtistClick = { artist -> openMusicArtist = artist },
+                    onPlaylistClick = { playlistRef -> openMusicPlaylist = playlistRef },
+                    onMoodsClick = { openMoodsAndGenres = true },
                     onSearch = { search.selectCategory(SearchCategory.Music); tab = Tab.Search },
                     onAccount = { accountSheet = true },
                     scrollToTop = scrollToTop[Tab.Music] ?: 0,
@@ -501,12 +560,26 @@ fun AirStreamApp() {
                             )
                         }
                     },
+                    onMusicArtistClick = { artist -> openMusicArtist = artist },
+                    onMusicPlaylistClick = { playlist -> openMusicPlaylist = playlist },
                     onSettings = { accountSheet = true },
                     scrollToTop = scrollToTop[t] ?: 0,
                 )
                 Tab.Library -> LibraryScreen(
-                    lib, contentPadding, onOpen = player::open, onOpenPlaylist = { openPlaylist = it },
-                    onSignIn = { signingIn = true }, onAccount = { accountSheet = true },
+                    lib = lib,
+                    contentPadding = contentPadding,
+                    onOpen = player::open,
+                    onOpenShort = { short ->
+                        if (tab != Tab.Shorts) shortsFrom = tab
+                        shorts.openExternal(short)
+                        tab = Tab.Shorts
+                    },
+                    onOpenHistory = { historyOpen = true },
+                    onOpenPlaylist = { openPlaylist = it },
+                    onOpenDownloads = { downloadsOpen = true },
+                    onOpenCollection = ::showPublicCollection,
+                    onSignIn = { signingIn = true },
+                    onAccount = { accountSheet = true },
                     scrollToTop = scrollToTop[Tab.Library] ?: 0,
                 )
             }
@@ -521,8 +594,59 @@ fun AirStreamApp() {
             val pl = openPlaylist
             val feed = playlistFeed
             if (pl != null && feed != null) {
-                PlaylistScreen(pl, feed, contentPadding, onBack = { openPlaylist = null }, onOpen = player::open)
+                PlaylistScreen(
+                    playlist = pl,
+                    feed = feed,
+                    contentPadding = contentPadding,
+                    onBack = { openPlaylist = null },
+                    onOpen = player::open,
+                    onOpenShort = { short ->
+                        if (tab != Tab.Shorts) shortsFrom = tab
+                        shorts.openExternal(short)
+                        openPlaylist = null
+                        tab = Tab.Shorts
+                    },
+                    onPlayPlaylist = { videos, index -> player.openPlaylist(videos, index) },
+                    onVideoLongPress = { video ->
+                        optionsFor = video
+                        optionsPlaylistFor = pl.takeIf { selected -> feed.videos.any { it.id == video.id } }
+                    },
+                )
             }
+        }
+
+        AnimatedVisibility(
+            visible = downloadsOpen,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            DownloadsScreen(
+                contentPadding = contentPadding,
+                onBack = { downloadsOpen = false },
+                onOpen = { download ->
+                    downloadsOpen = false
+                    player.openOffline(download)
+                },
+            )
+        }
+
+        AnimatedVisibility(
+            visible = historyOpen,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            HistoryScreen(
+                lib = lib,
+                contentPadding = contentPadding,
+                onBack = { historyOpen = false },
+                onOpen = player::open,
+                onOpenShort = { short ->
+                    if (tab != Tab.Shorts) shortsFrom = tab
+                    shorts.openExternal(short)
+                    historyOpen = false
+                    tab = Tab.Shorts
+                },
+            )
         }
 
         // A channel opens the same way, over everything below the mini-player.
@@ -565,13 +689,66 @@ fun AirStreamApp() {
                     },
                     onOpenPlaylist = { videos, index ->
                         player.setAudioOnly(false)
-                        // The restored upstream video player owns a single current item.
-                        // Keep collection taps compatible without changing its playback code.
-                        videos.getOrNull(index)?.let(player::open)
+                        player.openPlaylist(videos, index)
                     },
                     onOpenChannel = ::showChannel,
                 )
             }
+        }
+
+        // Flow Music screens: Artist, Playlist/Album, Moods & Genres
+        AnimatedVisibility(
+            visible = openMusicArtist != null,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            openMusicArtist?.let { artist ->
+                iMusicArtistScreen(
+                    channelId = artist.id,
+                    initialName = artist.name,
+                    initialThumbnail = artist.thumbnailUrl,
+                    onBackClick = { openMusicArtist = null },
+                    onTrackClick = { track, queue -> MusicPlayerState.play(track, queue) },
+                    onAlbumClick = { ref -> openMusicPlaylist = ref },
+                    onArtistClick = { nextArtistId -> openMusicArtist = MusicArtist(id = nextArtistId, name = "") },
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = openMusicPlaylist != null,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            openMusicPlaylist?.let { pl ->
+                iMusicPlaylistScreen(
+                    playlistId = pl.id,
+                    initialTitle = pl.title,
+                    initialAuthor = pl.author,
+                    initialThumbnail = pl.thumbnailUrl,
+                    isAlbum = pl.isAlbum,
+                    onBackClick = { openMusicPlaylist = null },
+                    onTrackClick = { track, queue -> MusicPlayerState.play(track, queue) },
+                    onArtistClick = { artistId -> openMusicArtist = MusicArtist(id = artistId, name = "") },
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = openMoodsAndGenres,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            iMusicMoodsAndGenresScreen(
+                onBackClick = { openMoodsAndGenres = false },
+                onMoodClick = { mood ->
+                    openMoodsAndGenres = false
+                    search.selectCategory(SearchCategory.Music)
+                    search.query = mood.title
+                    search.submit()
+                    tab = Tab.Search
+                },
+            )
         }
 
         // Ledgii's bottom vignette: the page color fades in over the last 130 dp (plus the
@@ -678,6 +855,7 @@ fun AirStreamApp() {
                     onOpen = player::open,
                     onCollapse = { player.expanded = false },
                     onFullscreen = { toggleFullscreen() },
+                    onPortraitFullscreen = { enterPortraitFullscreen() },
                     // With the controls on the video there's no bar over the player (it steps down below).
                     bottomClearance = if (PlayerControls.inBar) stackBottom + NavHeight + PlayerBarRaise + 16.dp else stackBottom + 16.dp,
                 )
@@ -778,7 +956,8 @@ fun AirStreamApp() {
                     IosStyledPlayer(
                         onCollapse = {
                             musicSheetState.collapseSoft()
-                        }
+                        },
+                        onAddToPlaylist = player::openPlaylists,
                     )
                 }
             )
@@ -789,12 +968,15 @@ fun AirStreamApp() {
             onSelect = { selected ->
                 when {
                     // Re-tapping the current tab: back out of a playlist, else scroll to top.
+                    selected == tab && openMusicArtist != null -> openMusicArtist = null
+                    selected == tab && openMusicPlaylist != null -> openMusicPlaylist = null
+                    selected == tab && openMoodsAndGenres -> openMoodsAndGenres = false
                     selected == tab && openChannel != null -> openChannel = null
                     selected == tab && openPlaylist != null -> openPlaylist = null
                     selected == tab -> scrollToTop[selected] = (scrollToTop[selected] ?: 0) + 1
                     else -> {
                         if (selected == Tab.Shorts) shortsFrom = tab
-                        openPlaylist = null; openChannel = null; tab = selected
+                        openPlaylist = null; openChannel = null; openMusicArtist = null; openMusicPlaylist = null; openMoodsAndGenres = false; tab = selected
                     }
                 }
             },
@@ -881,12 +1063,52 @@ fun AirStreamApp() {
         when (player.sheet) {
             PlayerSheet.Quality -> QualitySheet(player, onDismiss = { player.sheet = null })
             PlayerSheet.Speed -> SpeedSheet(player, onDismiss = { player.sheet = null })
-            PlayerSheet.Comments, PlayerSheet.Transcript, PlayerSheet.Description -> Unit // a panel inside the player (PlayerScreen)
+            PlayerSheet.Comments, PlayerSheet.Transcript, PlayerSheet.Description, PlayerSheet.OnTheGo -> Unit // a panel inside the player (PlayerScreen)
             PlayerSheet.Captions -> CaptionsSheet(player, onDismiss = { player.sheet = null }, onTranscript = { player.sheet = PlayerSheet.Transcript })
             PlayerSheet.Queue -> QueueSheet(player, onDismiss = { player.sheet = null })
             null -> Unit
         }
-        optionsFor?.let { video -> VideoOptionsSheet(video, player, onDismiss = { optionsFor = null }) }
+        optionsFor?.let { video ->
+            val playlist = optionsPlaylistFor
+            VideoOptionsSheet(
+                video,
+                player,
+                onDismiss = { optionsFor = null; optionsPlaylistFor = null },
+                onRemoveFromPlaylist = playlist?.let { currentPlaylist ->
+                    {
+                        playlistFeed?.removePlaylistVideo(currentPlaylist.id, video)
+                        optionsFor = null
+                        optionsPlaylistFor = null
+                    }
+                },
+            )
+        }
+        playlistOptionsFor?.let { playlist ->
+            PlaylistOptionsSheet(
+                playlist = playlist,
+                onDismiss = { playlistOptionsFor = null },
+                onReload = { selected ->
+                    if (selected.id == openPlaylist?.id) playlistFeed?.refresh()
+                    else lib.loadPlaylists()
+                },
+                onDelete = { selected ->
+                    scope.launch {
+                        runCatching { InnerTube.deletePlaylist(selected.id) }
+                            .onSuccess {
+                                lib.forgetPlaylist(selected.id)
+                                lib.loadPlaylists()
+                                if (openPlaylist?.id == selected.id) openPlaylist = null
+                                playlistOptionsFor = null
+                                player.actionMessage = "Playlist deleted"
+                            }
+                            .onFailure { player.actionMessage = it.message ?: "Couldn't delete playlist" }
+                    }
+                },
+            )
+        }
+        collectionOptionsFor?.let { collection ->
+            CollectionOptionsSheet(collection, onDismiss = { collectionOptionsFor = null })
+        }
         // No taller than the comments panel opens (Derek): its top rests just under the video.
         player.playlistTarget?.let { video -> SaveToPlaylistSheet(player, video, maxHeight = maxHeight - panelRestTop(player)) }
         // Confirmations ("Added to queue") when the full player isn't showing its own.
@@ -902,6 +1124,9 @@ fun AirStreamApp() {
                     CaptionLayer(player, bottom = 4.dp)
                 }
             }
+        }
+        CrashReports.pendingReport?.let { report ->
+            CrashReportDialog(report, onDismiss = CrashReports::dismiss)
         }
         }
     }
