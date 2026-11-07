@@ -357,7 +357,7 @@ fun MusicScreen(
                     }
 
                     // ── 4. Artists For You (9-sided Cookie Shape!) ──
-                    val artistsForYou = currentFeed.artistsForYou.takeIf { it.isNotEmpty() } ?: currentFeed.popularArtists
+                    val artistsForYou = currentFeed.artistsForYou
                     if (artistsForYou.isNotEmpty()) {
                         item(key = "artists_for_you") {
                             Column(modifier = Modifier.fillMaxWidth()) {
