@@ -77,7 +77,7 @@ object MusicBackend {
 
         // Fetch YouTube Music's Charts (top real artists with circular photos)
         try {
-            val chartsJson = postInnerTube("FEmusic_charts")
+            val chartsJson = postInnerTube("FEmusic_charts") // fetch charts
             parseShelves(chartsJson, sections, quickPicks, communityPlaylists, chartTopArtists, newReleases, topAlbums)
         } catch (e: Exception) {
             Log.w(TAG, "Error fetching FEmusic_charts: ${e.message}")
@@ -477,7 +477,6 @@ object MusicBackend {
         }
     }
 
-    // Artist parser
     private fun parseArtistItem(itemObj: JSONObject): MusicArtist? {
         val twoRow = itemObj.optJSONObject("musicTwoRowItemRenderer")
         if (twoRow != null) {
