@@ -1,6 +1,10 @@
 package com.github.itube
 
 import android.content.Intent
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.ClipData
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -32,10 +36,19 @@ import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.BookmarkAdd
+import androidx.compose.material.icons.rounded.BookmarkRemove
+import androidx.compose.material.icons.rounded.ContentCopy
 import com.github.itube.ui.components.MaterialLoader
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -64,6 +77,9 @@ val LocalChannelOpener = staticCompositionLocalOf<(String) -> Unit> { {} }
 
 /** Opens a public playlist or album page from anywhere in the app. */
 val LocalCollectionOpener = staticCompositionLocalOf<(PublicCollection) -> Unit> { {} }
+
+/** Opens the album or playlist action sheet. */
+val LocalCollectionMenu = staticCompositionLocalOf<(PublicCollection) -> Unit> { {} }
 
 @Stable
 class ChannelState(val url: String, private val scope: CoroutineScope) {
@@ -341,12 +357,13 @@ fun ChannelScreen(
 
 @Composable
 private fun ChannelShortCard(short: VideoItem, onClick: () -> Unit) {
+    val menu = LocalVideoMenu.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(9f / 16f)
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .pressable(pressedScale = 0.98f, onLongClick = { menu(short) }, onClick = onClick)
     ) {
         Thumbnail(short.thumbnail, Modifier.fillMaxSize(), radius = 0)
         Box(
@@ -389,11 +406,12 @@ private fun ChannelShortCard(short: VideoItem, onClick: () -> Unit) {
 @Composable
 private fun ChannelCollectionCard(col: PublicCollection, onClick: () -> Unit) {
     val c = MaterialTheme.colorScheme
+    val menu = LocalCollectionMenu.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .pressable(pressedScale = 0.98f, onLongClick = { menu(col) }, onClick = onClick)
             .padding(4.dp)
     ) {
         Box(
@@ -443,9 +461,12 @@ private enum class ChannelSection(val label: String) { Videos("Videos"), Shorts(
 @Composable
 fun PublicCollectionRow(collection: PublicCollection, onOpen: (PublicCollection) -> Unit) {
     val c = MaterialTheme.colorScheme
+    val menu = LocalCollectionMenu.current
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp).clip(RoundedCornerShape(16.dp))
-            .background(c.surfaceContainerLow).clickable { onOpen(collection) }.padding(8.dp),
+            .background(c.surfaceContainerLow)
+            .pressable(pressedScale = 0.985f, onLongClick = { menu(collection) }, onClick = { onOpen(collection) })
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(14.dp))) {
@@ -511,6 +532,7 @@ fun PublicCollectionScreen(
 ) {
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
+    val openCollectionMenu = LocalCollectionMenu.current
     Box(Modifier.fillMaxSize().background(c.surface)) {
         CollapsingHeaderLayout(header = {
             Row(
@@ -530,13 +552,9 @@ fun PublicCollectionScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                CircleAction(Icons.Rounded.Share, "Share", onClick = {
-                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                        putExtra(Intent.EXTRA_TEXT, state.collection.url)
-                        type = "text/plain"
-                    }
-                    context.startActivity(Intent.createChooser(sendIntent, "Share ${state.collection.title}"))
-                })
+                IconButton(onClick = { openCollectionMenu(state.collection) }) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = "Collection options", tint = c.onSurface)
+                }
             }
         }) { top ->
             when {
@@ -652,6 +670,18 @@ fun PublicCollectionScreen(
                                 },
                             )
                         }
+                        if (details.recommendations.isNotEmpty()) {
+                            item(key = "collectionRecommendationsTitle") {
+                                SectionTitle("Recommended")
+                            }
+                            itemsIndexed(details.recommendations, key = { index, video -> "recommended-${video.id}-$index" }) { index, video ->
+                                CompactCollectionTrackRow(
+                                    index = index + 1,
+                                    video = video,
+                                    onClick = { onOpen(video) },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -666,10 +696,11 @@ private fun CompactCollectionTrackRow(
     onClick: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
+    val menu = LocalVideoMenu.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .pressable(pressedScale = 0.99f, onLongClick = { menu(video) }, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -714,5 +745,67 @@ private fun CompactCollectionTrackRow(
                 fontSize = 12.sp,
             )
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CollectionOptionsSheet(collection: PublicCollection, onDismiss: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val saved = SavedCollections.contains(collection.url)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = c.surfaceContainerHigh,
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(58.dp).clip(RoundedCornerShape(12.dp))) {
+                Thumbnail(collection.thumbnail, Modifier.fillMaxSize(), radius = 0)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(collection.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(if (collection.isAlbum) "Album" else "Playlist", color = c.onSurfaceVariant, fontSize = 13.sp)
+            }
+        }
+        CollectionAction(Icons.Rounded.Download, "Download ${if (collection.isAlbum) "album" else "playlist"}") {
+            VideoDownloader.downloadCollection(context, collection)
+            Toast.makeText(context, "Downloading ${if (collection.isAlbum) "album" else "playlist"}", Toast.LENGTH_SHORT).show()
+            onDismiss()
+        }
+        CollectionAction(if (saved) Icons.Rounded.BookmarkRemove else Icons.Rounded.BookmarkAdd, if (saved) "Remove from Library" else "Save to Library") {
+            val added = SavedCollections.toggle(context, collection)
+            Toast.makeText(context, if (added) "Saved to Library" else "Removed from Library", Toast.LENGTH_SHORT).show()
+            onDismiss()
+        }
+        CollectionAction(Icons.Rounded.Share, "Share") {
+            shareLink(context, collection.url, collection.title)
+            onDismiss()
+        }
+        CollectionAction(Icons.Rounded.ContentCopy, "Copy link") {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText(collection.title, collection.url))
+            Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+            onDismiss()
+        }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun CollectionAction(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = c.onSurface, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(18.dp))
+        Text(title, color = c.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Medium)
     }
 }
