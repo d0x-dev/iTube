@@ -43,6 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Share
@@ -105,7 +106,12 @@ import android.view.inputmethod.InputMethodManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VideoOptionsSheet(video: VideoItem, player: PlayerState, onDismiss: () -> Unit) {
+fun VideoOptionsSheet(
+    video: VideoItem,
+    player: PlayerState,
+    onDismiss: () -> Unit,
+    onRemoveFromPlaylist: (() -> Unit)? = null,
+) {
     TrackBlurPopup()
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -128,6 +134,9 @@ fun VideoOptionsSheet(video: VideoItem, player: PlayerState, onDismiss: () -> Un
         if (Account.signedIn) {
             OptionRow(Icons.Rounded.WatchLater, "Save to Watch later") { player.saveToWatchLater(video); onDismiss() }
             OptionRow(Icons.Rounded.LibraryAdd, "Save to playlist") { onDismiss(); player.openPlaylists(video) }
+        }
+        if (onRemoveFromPlaylist != null) {
+            OptionRow(Icons.Rounded.Delete, "Remove from this playlist") { onRemoveFromPlaylist() }
         }
         OptionRow(Icons.Rounded.Share, "Share") {
             shareLink(context, "https://youtu.be/${video.id}", video.title)
