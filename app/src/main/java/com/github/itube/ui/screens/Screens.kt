@@ -1566,7 +1566,7 @@ fun SearchScreen(
                 }
             }
         }
-        // Interactive iMusic search filter chips
+        // iMusic filter chips (only when Music tab selected)
         if (state.category == SearchCategory.Music) {
             LazyRow(
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
