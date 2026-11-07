@@ -20,6 +20,12 @@
 
 ---
 
+## Preview
+
+![iTube player preview](https://github.com/user-attachments/assets/eefb57f5-8384-4aa0-8bf2-a47e41231c12)
+
+---
+
 ## 📱 Screen Showcase
 
 > [!NOTE]
