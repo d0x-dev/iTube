@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.MoreVert
@@ -317,6 +318,10 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
     private val watched = HashSet<String>()
     /** Short notes ("Sign in to like Shorts."), shown by the app shell. */
     var onMessage: (String) -> Unit = {}
+    /** Refreshes the Library's playlist tiles after creating or updating Saved Shorts. */
+    var onSavedShortsChanged: () -> Unit = {}
+    private val savedShortIds = HashSet<String>()
+    private var savingShortId: String? = null
 
     val comments = CommentsState(scope)
     var commentsOpen by mutableStateOf(false)
@@ -328,6 +333,10 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
 
     // ── Playback ──
     private val pool = ArrayList<ShortPlayer>()
+    /** Stream metadata lookups must return to Main before they refresh the Compose/player state. */
+    private val streamInfoJobs = HashMap<String, Job>()
+    private val streamInfoFailedAt = HashMap<String, Long>()
+    private var streamInfoGeneration by mutableIntStateOf(0)
     /** Which player holds which page; a page shows its player's picture. */
     internal val assigned = mutableStateMapOf<Int, ShortPlayer>()
     var active by mutableStateOf(false)
@@ -932,6 +941,7 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
     )
 
     fun audioTracksForCurrent(): List<AudioTrackChoice> {
+        @Suppress("UNUSED_VARIABLE") val observedGeneration = streamInfoGeneration
         val item = current ?: return emptyList()
         val info = StreamCache.get(item.id)
         if (info != null) {
@@ -966,18 +976,13 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
                 AudioTrackChoice(it.id, it.label, it.language, it.isOriginal, it.isDubbed, it.bitrate / 1000)
             }
         }
-        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { StreamCache.getOrLoad(item.id) }.onSuccess {
-                val d = details[item.id] ?: YouTube.details(item.id, wait = false)
-                details[item.id] = d
-                poke()
-            }
-        }
+        requestStreamInfo(item.id)
         return emptyList()
     }
 
     /** Full ladder from the extractor, including rungs absent from the lightweight details card. */
     fun qualitiesForCurrent(): List<Int> {
+        @Suppress("UNUSED_VARIABLE") val observedGeneration = streamInfoGeneration
         val item = current ?: return emptyList()
         val info = StreamCache.get(item.id)
         if (info != null) {
@@ -986,14 +991,32 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
         }
         val fromDetails = details[item.id]?.qualities
         if (!fromDetails.isNullOrEmpty()) return fromDetails
-        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { StreamCache.getOrLoad(item.id) }.onSuccess {
-                val d = details[item.id] ?: YouTube.details(item.id, wait = false)
-                details[item.id] = d
-                poke()
+        requestStreamInfo(item.id)
+        return emptyList()
+    }
+
+    /** Extract streams on IO, then publish completion on Main so UI/player state stays thread-safe. */
+    private fun requestStreamInfo(id: String) {
+        if (StreamCache.get(id) != null || streamInfoJobs[id]?.isActive == true) return
+        streamInfoFailedAt[id]?.let { failedAt ->
+            if (SystemClock.elapsedRealtime() - failedAt < 15_000L) return
+        }
+        streamInfoJobs[id] = scope.launch {
+            try {
+                withContext(kotlinx.coroutines.Dispatchers.IO) { StreamCache.getOrLoad(id) }
+                // This coroutine resumes on ShortsState's MainScope dispatcher.
+                streamInfoFailedAt.remove(id)
+                streamInfoGeneration++
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w(TAG, "shorts: couldn't extract stream options for $id", error)
+                streamInfoFailedAt[id] = SystemClock.elapsedRealtime()
+                streamInfoGeneration++
+            } finally {
+                streamInfoJobs.remove(id)
             }
         }
-        return emptyList()
     }
 
     fun selectQuality(height: Int?) {
@@ -1054,6 +1077,41 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
 
     fun toggleChannelMenu() {
         channelMenu = !channelMenu
+    }
+
+    /** Save the current Short into the account's actual "Saved Shorts" YouTube playlist. */
+    fun saveCurrentToSavedShorts() {
+        val item = current ?: return
+        if (!Account.signedIn) {
+            onMessage("Sign in to save Shorts.")
+            return
+        }
+        if (item.id in savedShortIds) {
+            onMessage("Already saved to Saved Shorts.")
+            return
+        }
+        if (savingShortId == item.id) return
+        savingShortId = item.id
+        scope.launch {
+            try {
+                val playlist = InnerTube.playlists().firstOrNull { it.title.equals("Saved Shorts", ignoreCase = true) }
+                val playlistId = playlist?.id ?: InnerTube.createPlaylist("Saved Shorts", "PRIVATE")
+                val alreadySaved = runCatching {
+                    InnerTube.saveChoices(item.id).firstOrNull { it.id == playlistId }?.contains == true
+                }.getOrDefault(false)
+                if (!alreadySaved) InnerTube.setInPlaylist(playlistId, item.id, add = true)
+                savedShortIds += item.id
+                onSavedShortsChanged()
+                onMessage(if (alreadySaved) "Already saved to Saved Shorts." else "Saved to Saved Shorts.")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w(TAG, "shorts: couldn't save ${item.id} to Saved Shorts", error)
+                onMessage("Couldn't save this Short. Check your sign-in and try again.")
+            } finally {
+                if (savingShortId == item.id) savingShortId = null
+            }
+        }
     }
 
     /** A page went over Shorts (or away): pause the short under it (or carry on). */
@@ -1388,6 +1446,7 @@ fun ShortsScreen(shorts: ShortsState, progress: () -> Float, overlayBottom: Dp) 
             ShortsMoreSheet(
                 shorts = shorts,
                 onDismiss = { showMenu = false },
+                onSave = { showMenu = false; shorts.saveCurrentToSavedShorts() },
                 onDescription = { showMenu = false; showDescription = true },
                 onDownload = { showMenu = false; showDownload = true },
                 onQuality = { showMenu = false; showQuality = true },
@@ -1457,6 +1516,7 @@ private fun ShortsHeader(onMore: () -> Unit) {
 private fun ShortsMoreSheet(
     shorts: ShortsState,
     onDismiss: () -> Unit,
+    onSave: () -> Unit,
     onDescription: () -> Unit,
     onDownload: () -> Unit,
     onQuality: () -> Unit,
@@ -1502,6 +1562,7 @@ private fun ShortsMoreSheet(
                 }
             }
 
+            ShortsOption(Icons.Rounded.BookmarkAdd, "Save to Saved Shorts", "Keep this Short in your Library", onSave)
             ShortsOption(Icons.Rounded.Description, "Description", "View info, facts, channels & links", onDescription)
             ShortsOption(Icons.Rounded.Speed, "Playback speed", if (shorts.playbackSpeed == 1f) "Normal (1.0×)" else "${shorts.playbackSpeed}×", onSpeed)
             ShortsOption(Icons.Rounded.HighQuality, "Quality", shorts.selectedQuality?.let { "${it}p" } ?: "Auto", onQuality)
