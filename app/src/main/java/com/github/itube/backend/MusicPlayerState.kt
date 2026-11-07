@@ -54,6 +54,7 @@ object MusicPlayerState : Player.Listener {
     private var loadJob: Job? = null
     /** True while a new URL is being extracted, before ExoPlayer has a buffering state. */
     private var resolvingStream = false
+    private var hasRecorded30sProgress = false
 
     // ── Observable UI States ──
     var currentTrack by mutableStateOf<MusicTrack?>(null)
@@ -187,6 +188,11 @@ object MusicPlayerState : Player.Listener {
                     // Never leave a spinner over audio that is already audible. Some streams
                     // report a buffering transition while their buffered audio is playing.
                     isLoading = !player.isPlaying && (resolvingStream || player.playbackState == Player.STATE_BUFFERING)
+
+                    if (positionMs >= 30_000L && !hasRecorded30sProgress) {
+                        hasRecorded30sProgress = true
+                        currentTrack?.let { ListeningProfile.recordTrackCompleted(it) }
+                    }
                 }
                 delay(200)
             }
@@ -197,6 +203,11 @@ object MusicPlayerState : Player.Listener {
         onPlaybackStarted?.invoke()
         expanded = true
         loadJob?.cancel()
+        hasRecorded30sProgress = false
+
+        val isLiked = ListeningProfile.isLiked(track.id)
+        val resolvedTrack = if (track.liked != isLiked) track.copy(liked = isLiked) else track
+
         // A new selection is a hard handoff: never let the previous song keep playing while
         // its replacement URL is being extracted.
         exoPlayer?.let { player ->
@@ -208,7 +219,8 @@ object MusicPlayerState : Player.Listener {
         isLoading = true
         positionMs = 0L
         durationMs = 0L
-        currentTrack = track
+        currentTrack = resolvedTrack
+        ListeningProfile.recordTrackStarted(resolvedTrack)
         // Match the video player: a MediaController connection lets Media3 publish its own
         // native Android media card when this player reaches a playable state.
         ensureSystemMediaSession()
@@ -416,7 +428,9 @@ object MusicPlayerState : Player.Listener {
 
     fun toggleLike() {
         val cur = currentTrack ?: return
-        val updated = cur.copy(liked = !cur.liked)
+        val newLiked = !cur.liked
+        ListeningProfile.recordLike(cur, newLiked)
+        val updated = cur.copy(liked = newLiked)
         currentTrack = updated
         val qIdx = queue.indexOfFirst { it.id == cur.id }
         if (qIdx >= 0) {
@@ -494,6 +508,7 @@ object MusicPlayerState : Player.Listener {
             isLoading = !playingNow && (resolvingStream || playbackState == Player.STATE_BUFFERING)
         }
         if (playbackState == Player.STATE_ENDED) {
+            currentTrack?.let { ListeningProfile.recordTrackCompleted(it) }
             if (repeatMode == Player.REPEAT_MODE_ONE) {
                 seekTo(0L)
                 exoPlayer?.play()
@@ -510,7 +525,7 @@ object MusicPlayerState : Player.Listener {
         if (playing) {
             resolvingStream = false
             isLoading = false
-            currentTrack?.let(ListeningProfile::record)
+            currentTrack?.let(ListeningProfile::recordTrackStarted)
         }
     }
 
