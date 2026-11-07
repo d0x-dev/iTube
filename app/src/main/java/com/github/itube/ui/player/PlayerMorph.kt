@@ -145,9 +145,9 @@ class PlayerMorph(
     }
 
     companion object {
-        const val FLING_PX_PER_S = 1400f
-        const val DISMISS_FROM_FULL = 0.18f
-        const val EXPAND_FROM_MINI = 0.18f
+        const val FLING_PX_PER_S = 500f
+        const val DISMISS_FROM_FULL = 0.12f
+        const val EXPAND_FROM_MINI = 0.12f
         private val settleSpec = spring(dampingRatio = 0.86f, stiffness = 550f, visibilityThreshold = 0.0005f)
         private val closeSpec = spring(dampingRatio = 1f, stiffness = 550f, visibilityThreshold = 0.0005f)
     }
