@@ -418,8 +418,10 @@ private fun AboutITubeV2() {
     val c = MaterialTheme.colorScheme
     val uri = LocalUriHandler.current
     val release = AppUpdate.available
+    val installedReleaseNotes = AppUpdate.releaseNotesFor(BuildConfig.VERSION_NAME)
     val checking = AppUpdate.checkingNow
     var showNotes by remember { mutableStateOf(false) }
+    var showInstalledNotes by remember { mutableStateOf(false) }
     val spin = rememberInfiniteTransition(label = "updateCheck").animateFloat(
         initialValue = 0f,
         targetValue = 360f,
@@ -470,6 +472,19 @@ private fun AboutITubeV2() {
         }
         AppUpdate.lastCheckMessage?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp)) }
         release?.let { Text("View release notes", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.pressable { showNotes = true }.padding(top = 9.dp)) }
+        Spacer(Modifier.height(12.dp))
+        Text("Installed version notes", modifier = Modifier.fillMaxWidth(), fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+        Spacer(Modifier.height(6.dp))
+        if (installedReleaseNotes != null) {
+            PillButton("View iTube ${installedReleaseNotes.version} notes", { showInstalledNotes = true })
+        } else {
+            Text(
+                "No release notes were published for iTube ${BuildConfig.VERSION_NAME}.",
+                modifier = Modifier.fillMaxWidth(),
+                color = c.onSurfaceVariant,
+                fontSize = 13.sp,
+            )
+        }
         Spacer(Modifier.height(18.dp))
         AboutSocialHub(uri)
         Spacer(Modifier.height(26.dp))
@@ -495,6 +510,9 @@ private fun AboutITubeV2() {
         Text("GitHub · d0x-dev/iTube", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.pressable { uri.openUri("https://github.com/d0x-dev/iTube") })
     }
     if (showNotes && release != null) UpdateNotesSheet(release, onDismiss = { showNotes = false })
+    if (showInstalledNotes && installedReleaseNotes != null) {
+        InstalledVersionNotesSheet(installedReleaseNotes, onDismiss = { showInstalledNotes = false })
+    }
 }
 
 @Composable
