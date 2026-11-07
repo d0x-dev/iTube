@@ -20,8 +20,14 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -32,6 +38,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
 
 sealed class DownloadOption {
     abstract val label: String
@@ -64,6 +71,7 @@ object VideoDownloader {
     private const val CHANNEL_NAME = "Downloads"
     private val nextId = AtomicInteger(1000)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val jobs = ConcurrentHashMap<Int, Job>()
 
     fun init(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -187,27 +195,115 @@ object VideoDownloader {
         return options
     }
 
-    fun download(context: Context, videoTitle: String, option: DownloadOption) {
+    fun download(context: Context, video: VideoItem, description: String, option: DownloadOption) {
         val appContext = context.applicationContext
         init(appContext)
         val notificationId = nextId.incrementAndGet()
+        launchTracked(appContext, notificationId, video, "Preparing download…") {
+            performDownload(appContext, notificationId, video, description, option)
+        }
+    }
 
-        scope.launch {
-            runCatching {
-                performDownload(appContext, notificationId, videoTitle, option)
-            }.onFailure { err ->
-                Log.e(TAG, "Download failed for '$videoTitle'", err)
-                showFailedNotification(appContext, notificationId, videoTitle, err.message ?: "Download error")
+    /** Downloads each video in a public album or playlist sequentially at its best available quality. */
+    fun downloadCollection(context: Context, collection: PublicCollection) {
+        val appContext = context.applicationContext
+        init(appContext)
+        val notificationId = nextId.incrementAndGet()
+        val collectionItem = VideoItem(collection.url, collection.title, collection.subtitle, thumbnail = collection.thumbnail)
+        launchTracked(appContext, notificationId, collectionItem, "Loading playlist…") {
+            val details = YouTube.publicCollection(collection.url, collection.isAlbum)
+            details.videos.forEach { video ->
+                currentCoroutineContext().ensureActive()
+                DownloadLibrary.updateActive(ActiveDownload(notificationId, video, "Preparing download…"))
+                try {
+                    val info = StreamCache.getOrLoad(video.id)
+                    val best = extractOptions(info)
+                        .filterIsInstance<DownloadOption.Video>()
+                        .maxWithOrNull(compareBy<DownloadOption.Video> { it.height }.thenBy { it.fps })
+                        ?: throw IOException("No downloadable video quality is available")
+                    val description = info.description?.let { text ->
+                        if (text.type == org.schabi.newpipe.extractor.stream.Description.HTML) {
+                            androidx.core.text.HtmlCompat.fromHtml(text.content, androidx.core.text.HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
+                        } else text.content.trim()
+                    }.orEmpty()
+                    performDownload(appContext, notificationId, video, description, best)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    Log.e(TAG, "Collection download failed for '${video.title}'", error)
+                    showFailedNotification(appContext, notificationId, video.title, error.message ?: "Download error")
+                }
             }
         }
+    }
+
+    fun cancel(context: Context, notificationId: Int) {
+        jobs.remove(notificationId)?.cancel(CancellationException("Download cancelled"))
+        NotificationManagerCompat.from(context.applicationContext).cancel(notificationId)
+        DownloadLibrary.finishActive(notificationId)
+    }
+
+    private fun launchTracked(context: Context, notificationId: Int, item: VideoItem, initialStatus: String, block: suspend () -> Unit) {
+        DownloadLibrary.updateActive(ActiveDownload(notificationId, item, initialStatus))
+        notifyProgress(context, notificationId, item.title, initialStatus, null)
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                block()
+            } catch (cancelled: CancellationException) {
+                NotificationManagerCompat.from(context).cancel(notificationId)
+                throw cancelled
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                Log.e(TAG, "Download failed for '${item.title}'", error)
+                showFailedNotification(context, notificationId, item.title, error.message ?: "Download error")
+            } finally {
+                jobs.remove(notificationId)
+                DownloadLibrary.finishActive(notificationId)
+            }
+        }
+        jobs[notificationId] = job
+        job.start()
+    }
+
+    private fun cancelPendingIntent(context: Context, notificationId: Int) = PendingIntent.getBroadcast(
+        context,
+        notificationId,
+        Intent(context, DownloadCancelReceiver::class.java).putExtra(DownloadCancelReceiver.EXTRA_ID, notificationId),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun downloadsPendingIntent(context: Context, notificationId: Int) = PendingIntent.getActivity(
+        context,
+        notificationId + 50_000,
+        Intent(context, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_OPEN_DOWNLOADS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun notifyProgress(context: Context, id: Int, title: String, status: String, progress: Int?) {
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle("Downloading: $title")
+            .setContentText(status)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setProgress(100, progress?.coerceIn(0, 100) ?: 0, progress == null)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(downloadsPendingIntent(context, id))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPendingIntent(context, id))
+        runCatching { NotificationManagerCompat.from(context).notify(id, builder.build()) }
     }
 
     private suspend fun performDownload(
         context: Context,
         notificationId: Int,
-        title: String,
+        video: VideoItem,
+        description: String,
         option: DownloadOption
     ) = withContext(Dispatchers.IO) {
+        val title = video.title
         val nm = NotificationManagerCompat.from(context)
         val cleanTitle = title.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
 
@@ -219,6 +315,8 @@ object VideoDownloader {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(downloadsPendingIntent(context, notificationId))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPendingIntent(context, notificationId))
 
         try {
             nm.notify(notificationId, builder.build())
@@ -229,6 +327,7 @@ object VideoDownloader {
             val now = System.currentTimeMillis()
             if (now - lastUpdate >= 300 || currentProgress == 100) {
                 lastUpdate = now
+                DownloadLibrary.updateActive(ActiveDownload(notificationId, video, text, currentProgress.coerceIn(0, 100)))
                 builder.setProgress(100, currentProgress.coerceIn(0, 100), false)
                 builder.setContentText(text)
                 try {
@@ -265,6 +364,8 @@ object VideoDownloader {
                         }
                         val fileName = "$cleanTitle [${option.label}].mp4"
                         val savedUri = saveToDownloads(context, tempFile, fileName, "video/mp4")
+                            ?: throw IOException("Couldn't save the video to Downloads")
+                        DownloadLibrary.register(context, video, description, savedUri, fileName)
                         showCompleteNotification(context, notificationId, title, option.label, savedUri, "video/mp4")
                     } finally {
                         tempFile.delete()
@@ -302,6 +403,8 @@ object VideoDownloader {
 
                         val fileName = "$cleanTitle [${option.label}].mp4"
                         val savedUri = saveToDownloads(context, finalFile, fileName, "video/mp4")
+                            ?: throw IOException("Couldn't save the video to Downloads")
+                        DownloadLibrary.register(context, video, description, savedUri, fileName)
                         showCompleteNotification(context, notificationId, title, option.label, savedUri, "video/mp4")
                     } finally {
                         tempVideo.delete()
@@ -313,13 +416,19 @@ object VideoDownloader {
         }
     }
 
-    private fun downloadFile(url: String, targetFile: File, onProgress: (bytesRead: Long, totalBytes: Long) -> Unit) {
+    @OptIn(InternalCoroutinesApi::class)
+    private suspend fun downloadFile(url: String, targetFile: File, onProgress: (bytesRead: Long, totalBytes: Long) -> Unit) = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", Net.USER_AGENT)
             .build()
 
-        Net.client.newCall(request).execute().use { response ->
+        val call = Net.client.newCall(request)
+        val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
+            if (cause is CancellationException) call.cancel()
+        }
+        try {
+        call.execute().use { response ->
             if (!response.isSuccessful) throw IOException("Network error ${response.code}")
             val body = response.body ?: throw IOException("Empty body")
             val totalBytes = body.contentLength()
@@ -331,6 +440,7 @@ object VideoDownloader {
                     var bytesRead = 0L
                     var read: Int
                     while (input.read(buffer).also { read = it } != -1) {
+                        currentCoroutineContext().ensureActive()
                         output.write(buffer, 0, read)
                         bytesRead += read
                         onProgress(bytesRead, totalBytes)
@@ -338,6 +448,9 @@ object VideoDownloader {
                     output.flush()
                 }
             }
+        }
+        } finally {
+            cancellation?.dispose()
         }
     }
 
@@ -418,15 +531,19 @@ object VideoDownloader {
             }
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
-            resolver.openOutputStream(uri)?.use { out ->
-                sourceFile.inputStream().use { input ->
-                    input.copyTo(out)
+            try {
+                val output = resolver.openOutputStream(uri) ?: throw IOException("Couldn't open the Downloads file")
+                output.use { out ->
+                    sourceFile.inputStream().use { input -> input.copyTo(out) }
                 }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                uri
+            } catch (error: Exception) {
+                resolver.delete(uri, null, null)
+                throw error
             }
-            values.clear()
-            values.put(MediaStore.Downloads.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            uri
         } else {
             val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "iTube")
             dir.mkdirs()
