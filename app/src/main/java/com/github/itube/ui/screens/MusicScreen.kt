@@ -118,7 +118,6 @@ fun MusicScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val c = MaterialTheme.colorScheme
-    // Shape
     val artistShape = flowArtistShape()
 
     var feed by remember { mutableStateOf<MusicHomeFeed?>(null) }
@@ -422,7 +421,7 @@ fun MusicScreen(
                                 HorizontalPager(
                                     state = pagerState,
                                     contentPadding = PaddingValues(horizontal = 32.dp),
-                                    pageSpacing = 16.dp,
+                                    pageSpacing = 16.dp // smooth slide,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(210.dp)
