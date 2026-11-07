@@ -26,6 +26,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.github.itube.backend.SafeUnbindContext
 import com.github.itube.backend.lyrics.LyricsHelper
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
@@ -140,33 +141,35 @@ object MusicPlayerState : Player.Listener {
 
     fun onServiceDestroyed() {
         musicController = null
+        musicControllerFuture = null
     }
 
     private fun ensureSystemMediaSession() {
         val context = appContext ?: return
         if (musicControllerFuture != null || musicController != null) return
-        val token = SessionToken(context, ComponentName(context, MusicPlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
+        val safeContext = SafeUnbindContext(context)
+        val token = SessionToken(safeContext, ComponentName(safeContext, MusicPlaybackService::class.java))
+        val future = MediaController.Builder(safeContext, token).buildAsync()
         musicControllerFuture = future
         future.addListener({
             runCatching { future.get() }
                 .onSuccess { controller -> musicController = controller }
                 .onFailure { error ->
                     musicControllerFuture = null
+                    musicController = null
                     Log.e(TAG, "Failed to connect MusicPlaybackService", error)
                 }
-        }, ContextCompat.getMainExecutor(context))
+        }, ContextCompat.getMainExecutor(safeContext))
     }
 
     private fun stopSystemMediaSession() {
-        val context = appContext ?: return
         try {
             musicControllerFuture?.let(MediaController::releaseFuture)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed releasing MusicPlaybackService controller", e)
+        } finally {
             musicControllerFuture = null
             musicController = null
-            context.stopService(Intent(context, MusicPlaybackService::class.java))
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to stop MusicPlaybackService", e)
         }
     }
 
@@ -209,7 +212,6 @@ object MusicPlayerState : Player.Listener {
         // Match the video player: a MediaController connection lets Media3 publish its own
         // native Android media card when this player reaches a playable state.
         ensureSystemMediaSession()
-        ListeningProfile.record(track)
         loadJob = scope.launch {
             try {
                 // If an explicit new queue is provided and it's distinct from the current queue, replace it defensively
@@ -229,6 +231,7 @@ object MusicPlayerState : Player.Listener {
                         queueIndex = queue.lastIndex
                     }
                 }
+                MusicPlaybackService.refreshCustomLayout()
 
                 // Pause video player if currently playing
                 pauseVideoPlayerIfPlaying()
@@ -251,7 +254,7 @@ object MusicPlayerState : Player.Listener {
                     ensureSystemMediaSession()
                     val mediaItem = MediaItem.Builder()
                         .setMediaId(track.id)
-                        .setUri(streamUrl)
+                        .setUri(Uri.parse(streamUrl))
                         .setMediaMetadata(
                             MediaMetadata.Builder()
                                 .setTitle(track.title)
@@ -277,6 +280,7 @@ object MusicPlayerState : Player.Listener {
                                     queue.add(track)
                                     queue.addAll(radio)
                                     queueIndex = 0
+                                    MusicPlaybackService.refreshCustomLayout()
                                 }
                             }
                         }
@@ -375,11 +379,16 @@ object MusicPlayerState : Player.Listener {
     }
 
     fun skipNext() {
-        if (queue.isEmpty()) return
+        if (queue.size <= 1) return
         val nextIndex = if (shuffleEnabled) {
-            queue.indices.random()
+            (queue.indices.filter { it != queueIndex }).randomOrNull() ?: return
         } else {
-            (queueIndex + 1) % queue.size
+            val sequential = queueIndex + 1
+            when {
+                sequential < queue.size -> sequential
+                repeatMode == Player.REPEAT_MODE_ALL -> 0
+                else -> return
+            }
         }
         val nextTrack = queue.getOrNull(nextIndex) ?: return
         queueIndex = nextIndex
@@ -393,7 +402,13 @@ object MusicPlayerState : Player.Listener {
             seekTo(0L)
             return
         }
-        val prevIndex = if (queueIndex > 0) queueIndex - 1 else queue.size - 1
+        if (queue.size <= 1) return
+        val prevIndex = when {
+            shuffleEnabled -> (queue.indices.filter { it != queueIndex }).randomOrNull() ?: return
+            queueIndex > 0 -> queueIndex - 1
+            repeatMode == Player.REPEAT_MODE_ALL -> queue.size - 1
+            else -> return
+        }
         val prevTrack = queue.getOrNull(prevIndex) ?: return
         queueIndex = prevIndex
         play(prevTrack, null)
@@ -416,6 +431,8 @@ object MusicPlayerState : Player.Listener {
 
     fun toggleShuffle() {
         shuffleEnabled = !shuffleEnabled
+        exoPlayer?.let { it.shuffleModeEnabled = shuffleEnabled }
+            ?: MusicPlaybackService.refreshCustomLayout()
     }
 
     fun toggleRepeat() {
@@ -424,11 +441,13 @@ object MusicPlayerState : Player.Listener {
             Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
-        exoPlayer?.repeatMode = repeatMode
+        exoPlayer?.let { it.repeatMode = repeatMode }
+            ?: MusicPlaybackService.refreshCustomLayout()
     }
 
     fun addToQueue(track: MusicTrack) {
         queue.add(track)
+        MusicPlaybackService.refreshCustomLayout()
     }
 
     fun removeFromQueue(index: Int) {
@@ -437,6 +456,7 @@ object MusicPlayerState : Player.Listener {
             if (queueIndex >= queue.size) {
                 queueIndex = (queue.size - 1).coerceAtLeast(0)
             }
+            MusicPlaybackService.refreshCustomLayout()
         }
     }
 
@@ -445,6 +465,7 @@ object MusicPlayerState : Player.Listener {
             queue.clear()
             queue.add(current)
             queueIndex = 0
+            MusicPlaybackService.refreshCustomLayout()
         }
     }
 
@@ -489,7 +510,18 @@ object MusicPlayerState : Player.Listener {
         if (playing) {
             resolvingStream = false
             isLoading = false
+            currentTrack?.let(ListeningProfile::record)
         }
+    }
+
+    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+        shuffleEnabled = shuffleModeEnabled
+        MusicPlaybackService.refreshCustomLayout()
+    }
+
+    override fun onRepeatModeChanged(repeatMode: Int) {
+        this.repeatMode = repeatMode
+        MusicPlaybackService.refreshCustomLayout()
     }
 
     override fun onPlayerError(error: PlaybackException) {
