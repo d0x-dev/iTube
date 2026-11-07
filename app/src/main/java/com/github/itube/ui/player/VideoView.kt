@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.media3.common.Player
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.runtime.SideEffect
@@ -14,6 +15,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
@@ -471,6 +473,8 @@ fun VideoContent(
                 drop = if (drop == kind) null else kind
                 return true
             }
+            val configuration = LocalConfiguration.current
+            val isPortraitFullscreen = fullscreen && configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
             Box(Modifier.fillMaxSize().then(inset).onGloballyPositioned { dropAnchors[0] = it }) {
                 // Top row: the title (fullscreen); audio only (portrait), speed, quality, picture-in-picture.
                 Row(
@@ -478,8 +482,12 @@ fun VideoContent(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // No minimize button: swipe the player down (or Back) instead.
-                    if (fullscreen) {
+                    if (isPortraitFullscreen) {
+                        OverlayTile("Back", enabled, tool, onClick = { touched(); onCollapse() }) { ink ->
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Exit portrait fullscreen", tint = ink, modifier = Modifier.size(tool * 0.52f))
+                        }
+                        Spacer(Modifier.weight(1f))
+                    } else if (fullscreen) {
                         Text(
                             state.current?.title.orEmpty(),
                             color = Color.White,
@@ -534,6 +542,35 @@ fun VideoContent(
                         }) { ink -> Icon(Icons.Rounded.PictureInPictureAlt, null, tint = ink, modifier = Modifier.size(tool * 0.5f)) }
                     }
                 }
+                if (isPortraitFullscreen && !state.current?.title.isNullOrBlank()) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(top = 58.dp, start = 14.dp, end = 14.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .pressable { touched(); state.sheet = PlayerSheet.Description }
+                    ) {
+                        Text(
+                            text = state.current?.title.orEmpty(),
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (!state.current?.channel.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = state.current?.channel.orEmpty(),
+                                color = Color.White.copy(alpha = 0.72f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
                 // Flow-style transport row: previous · play/pause · next.  Other top controls
                 // deliberately stay untouched; this only replaces the former ±10-second tiles.
                 val seek = if (fullscreen) 60.dp else 51.dp
@@ -562,6 +599,20 @@ fun VideoContent(
                         .padding(start = 14.dp, end = 8.dp, bottom = if (fullscreen) 6.dp else 14.dp),
                 ) {
                     var scrubPreview by remember { mutableStateOf<Long?>(null) }
+                    var onTheGoPillDismissed by remember(state.current?.id) { mutableStateOf(false) }
+                    if (!onTheGoPillDismissed && state.current != null) {
+                        OnTheGoPill(
+                            onClick = {
+                                touched()
+                                state.onTheGoOpen = true
+                            },
+                            onDismiss = {
+                                touched()
+                                onTheGoPillDismissed = true
+                            },
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             val shownMs = scrubPreview ?: state.positionMs
@@ -1141,8 +1192,8 @@ fun FullscreenPlayer(state: PlayerState, onExit: () -> Unit) {
                 .fillMaxSize()
                 .fullscreenGestures(sliders, onPull = { drag = it }, onSwipeDown = onExit)
                 .graphicsLayer {
-                    // A little give while dragging, so the gesture is visibly being heard.
-                    translationY = if (reduced) 0f else drag * 0.35f
+                    // A responsive give while dragging down to exit fullscreen, directly following finger tip.
+                    translationY = if (reduced) 0f else drag * 0.85f
                 },
         )
         SliderLevel(sliders)
