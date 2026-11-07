@@ -477,6 +477,7 @@ object MusicBackend {
         }
     }
 
+    // Artist parser
     private fun parseArtistItem(itemObj: JSONObject): MusicArtist? {
         val twoRow = itemObj.optJSONObject("musicTwoRowItemRenderer")
         if (twoRow != null) {
@@ -626,7 +627,6 @@ object MusicBackend {
         return null
     }
 
-    // Track parser
     private fun parseTrackItem(itemObj: JSONObject): MusicTrack? {
         // Handle musicResponsiveListItemRenderer (common in Trending / charts / search)
         itemObj.optJSONObject("musicResponsiveListItemRenderer")?.let { responsive ->
