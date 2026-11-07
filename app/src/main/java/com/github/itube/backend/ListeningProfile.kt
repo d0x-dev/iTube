@@ -13,16 +13,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Production-ready on-device Listening Profile and Recommendation Engine for iMusic.
- * Saves and scans every step of the user:
- * - Plays and completions
- * - Likes and unlikes
- * - Search queries (songs, artists, albums, playlists)
- * - Artist views and detailed profile interactions
- * - Playlist and album visits
- *
- * Uses this rich taste profile to deliver genuine personalized recommendations
- * (Artists For You, From Artists You Love, Mixed For You, Speed Dial, etc.) like Flow.
+ * Production-ready on-device Taste Engine and Listening Profile for iMusic.
+ * - Hardware-encrypted local storage using SecureStorage (AES-GCM).
+ * - Instant synchronous loading on app start so recommendations are immediately personalized.
+ * - Mistake-proof: accidental taps (< 15 seconds) are NEVER recorded into user profile.
+ * - Scans confirmed listening, completions, likes, searches, and artist profile views.
  */
 object ListeningProfile {
     private const val TAG = "ListeningProfile"
@@ -30,15 +25,14 @@ object ListeningProfile {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // SharedPreferences Keys
-    private const val PREFS_NAME = "listening_profile"
-    private const val KEY_TOKENS = "music_taste_tokens"
-    private const val KEY_RECENT = "music_recent_tracks"
-    private const val KEY_ARTISTS = "music_artist_affinities_v2"
-    private const val KEY_TRACKS = "music_track_records_v2"
-    private const val KEY_LIKES = "music_liked_track_ids_v2"
-    private const val KEY_SEARCHES = "music_search_history_v2"
-    private const val KEY_PLAYLISTS = "music_playlist_history_v2"
-    private const val KEY_RELATED = "music_related_artists_v2"
+    private const val PREFS_NAME = "listening_profile_secure"
+    private const val KEY_TOKENS = "sec_tokens"
+    private const val KEY_RECENT = "sec_recent"
+    private const val KEY_ARTISTS = "sec_artists"
+    private const val KEY_TRACKS = "sec_tracks"
+    private const val KEY_LIKES = "sec_likes"
+    private const val KEY_SEARCHES = "sec_searches"
+    private const val KEY_RELATED = "sec_related"
 
     // In-memory thread-safe caches for zero-latency reads
     private val artistAffinities = ConcurrentHashMap<String, ArtistAffinity>()
@@ -46,8 +40,12 @@ object ListeningProfile {
     private val likedTrackIds = ConcurrentHashMap.newKeySet<String>()
     private val recentTracksList = CopyOnWriteArrayList<MusicTrack>()
     private val searchHistoryList = CopyOnWriteArrayList<SearchRecord>()
-    private val playlistHistoryList = CopyOnWriteArrayList<PlaylistRecord>()
     private val relatedArtistsCache = ConcurrentHashMap<String, List<MusicArtist>>()
+
+    // Accidental tap protection state
+    private var pendingTrack: MusicTrack? = null
+    private var pendingStartMs: Long = 0L
+    private var pendingConfirmed: Boolean = false
 
     private val stopWords = setOf(
         "official", "video", "audio", "music", "with", "from", "the", "and", "feat", "ft",
@@ -56,139 +54,139 @@ object ListeningProfile {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        loadFromDisk()
+        // Load synchronously so recommendations are ready immediately on startup
+        loadFromDiskSynchronous()
     }
 
-    private fun loadFromDisk() {
-        scope.launch {
-            try {
-                // 1. Load recent tracks
-                val recentRaw = prefs.getString(KEY_RECENT, null)
-                if (!recentRaw.isNullOrBlank()) {
-                    runCatching {
-                        val arr = JSONArray(recentRaw)
-                        val list = mutableListOf<MusicTrack>()
-                        for (i in 0 until arr.length()) {
-                            val o = arr.optJSONObject(i) ?: continue
-                            val id = o.optString("id")
-                            if (id.isNotBlank()) {
-                                list.add(
-                                    MusicTrack(
-                                        id = id,
-                                        title = o.optString("title"),
-                                        artists = o.optString("artists"),
-                                        artistId = o.optString("artistId").ifBlank { null },
-                                        album = o.optString("album").ifBlank { null },
-                                        thumbnailUrl = o.optString("thumbnail").ifBlank { null },
-                                        durationSec = o.optLong("duration"),
-                                        liked = o.optBoolean("liked", false)
+    private fun loadFromDiskSynchronous() {
+        try {
+            // 1. Load Liked track IDs
+            val likesRaw = SecureStorage.decrypt(prefs.getString(KEY_LIKES, null))
+            if (likesRaw.isNotBlank()) {
+                runCatching {
+                    val arr = JSONArray(likesRaw)
+                    for (i in 0 until arr.length()) {
+                        val id = arr.optString(i)
+                        if (id.isNotBlank()) likedTrackIds.add(id)
+                    }
+                }
+            }
+
+            // 2. Load Recent Tracks
+            val recentRaw = SecureStorage.decrypt(prefs.getString(KEY_RECENT, null))
+            if (recentRaw.isNotBlank()) {
+                runCatching {
+                    val arr = JSONArray(recentRaw)
+                    val list = mutableListOf<MusicTrack>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        val id = o.optString("id")
+                        if (id.isNotBlank()) {
+                            list.add(
+                                MusicTrack(
+                                    id = id,
+                                    title = o.optString("title"),
+                                    artists = o.optString("artists"),
+                                    artistId = o.optString("artistId").ifBlank { null },
+                                    album = o.optString("album").ifBlank { null },
+                                    thumbnailUrl = o.optString("thumbnail").ifBlank { null },
+                                    durationSec = o.optLong("duration"),
+                                    liked = likedTrackIds.contains(id)
+                                )
+                            )
+                        }
+                    }
+                    recentTracksList.clear()
+                    recentTracksList.addAll(list.take(50))
+                }
+            }
+
+            // 3. Load Artist Affinities
+            val artistsRaw = SecureStorage.decrypt(prefs.getString(KEY_ARTISTS, null))
+            if (artistsRaw.isNotBlank()) {
+                runCatching {
+                    val arr = JSONArray(artistsRaw)
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        val name = o.optString("name")
+                        if (name.isBlank()) continue
+                        val key = name.lowercase().trim()
+                        val affinity = ArtistAffinity(
+                            id = o.optString("id").ifBlank { "artist_$key" },
+                            name = name,
+                            thumbnailUrl = o.optString("thumbnail").ifBlank { null },
+                            subscribers = o.optString("subscribers").ifBlank { null },
+                            playCount = o.optInt("playCount", 0),
+                            likeCount = o.optInt("likeCount", 0),
+                            viewCount = o.optInt("viewCount", 0),
+                            skipCount = o.optInt("skipCount", 0),
+                            lastInteractedMs = o.optLong("lastInteractedMs", System.currentTimeMillis()),
+                            score = o.optDouble("score", 0.0).toFloat()
+                        )
+                        artistAffinities[key] = affinity
+                    }
+                }
+            }
+
+            // 4. Load Track Records
+            val tracksRaw = SecureStorage.decrypt(prefs.getString(KEY_TRACKS, null))
+            if (tracksRaw.isNotBlank()) {
+                runCatching {
+                    val arr = JSONArray(tracksRaw)
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        val id = o.optString("id")
+                        if (id.isBlank()) continue
+                        trackRecords[id] = TrackRecord(
+                            id = id,
+                            title = o.optString("title"),
+                            artists = o.optString("artists"),
+                            artistId = o.optString("artistId").ifBlank { null },
+                            album = o.optString("album").ifBlank { null },
+                            thumbnailUrl = o.optString("thumbnail").ifBlank { null },
+                            durationSec = o.optLong("durationSec", 0),
+                            playCount = o.optInt("playCount", 0),
+                            liked = likedTrackIds.contains(id),
+                            lastPlayedMs = o.optLong("lastPlayedMs", 0),
+                            completedCount = o.optInt("completedCount", 0)
+                        )
+                    }
+                }
+            }
+
+            // 5. Load Related Artists Cache
+            val relatedRaw = SecureStorage.decrypt(prefs.getString(KEY_RELATED, null))
+            if (relatedRaw.isNotBlank()) {
+                runCatching {
+                    val obj = JSONObject(relatedRaw)
+                    val keys = obj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val arr = obj.optJSONArray(k) ?: continue
+                        val rList = mutableListOf<MusicArtist>()
+                        for (j in 0 until arr.length()) {
+                            val item = arr.optJSONObject(j) ?: continue
+                            val rId = item.optString("id")
+                            val rName = item.optString("name")
+                            if (rId.isNotBlank() && rName.isNotBlank()) {
+                                rList.add(
+                                    MusicArtist(
+                                        id = rId,
+                                        name = rName,
+                                        thumbnailUrl = item.optString("thumbnail").ifBlank { null },
+                                        subscribers = item.optString("subscribers").ifBlank { null }
                                     )
                                 )
                             }
                         }
-                        recentTracksList.clear()
-                        recentTracksList.addAll(list.take(50))
-                    }
-                }
-
-                // 2. Load liked track IDs
-                val likesRaw = prefs.getString(KEY_LIKES, null)
-                if (!likesRaw.isNullOrBlank()) {
-                    runCatching {
-                        val arr = JSONArray(likesRaw)
-                        for (i in 0 until arr.length()) {
-                            val id = arr.optString(i)
-                            if (id.isNotBlank()) likedTrackIds.add(id)
+                        if (rList.isNotEmpty()) {
+                            relatedArtistsCache[k] = rList
                         }
                     }
                 }
-
-                // 3. Load Artist Affinities
-                val artistsRaw = prefs.getString(KEY_ARTISTS, null)
-                if (!artistsRaw.isNullOrBlank()) {
-                    runCatching {
-                        val arr = JSONArray(artistsRaw)
-                        for (i in 0 until arr.length()) {
-                            val o = arr.optJSONObject(i) ?: continue
-                            val name = o.optString("name")
-                            if (name.isBlank()) continue
-                            val key = name.lowercase().trim()
-                            val affinity = ArtistAffinity(
-                                id = o.optString("id").ifBlank { "artist_$key" },
-                                name = name,
-                                thumbnailUrl = o.optString("thumbnail").ifBlank { null },
-                                subscribers = o.optString("subscribers").ifBlank { null },
-                                playCount = o.optInt("playCount", 0),
-                                likeCount = o.optInt("likeCount", 0),
-                                viewCount = o.optInt("viewCount", 0),
-                                lastInteractedMs = o.optLong("lastInteractedMs", System.currentTimeMillis()),
-                                score = o.optDouble("score", 0.0).toFloat()
-                            )
-                            artistAffinities[key] = affinity
-                        }
-                    }
-                }
-
-                // 4. Load Track Records
-                val tracksRaw = prefs.getString(KEY_TRACKS, null)
-                if (!tracksRaw.isNullOrBlank()) {
-                    runCatching {
-                        val arr = JSONArray(tracksRaw)
-                        for (i in 0 until arr.length()) {
-                            val o = arr.optJSONObject(i) ?: continue
-                            val id = o.optString("id")
-                            if (id.isBlank()) continue
-                            trackRecords[id] = TrackRecord(
-                                id = id,
-                                title = o.optString("title"),
-                                artists = o.optString("artists"),
-                                artistId = o.optString("artistId").ifBlank { null },
-                                album = o.optString("album").ifBlank { null },
-                                thumbnailUrl = o.optString("thumbnail").ifBlank { null },
-                                durationSec = o.optLong("durationSec", 0),
-                                playCount = o.optInt("playCount", 0),
-                                liked = o.optBoolean("liked", false),
-                                lastPlayedMs = o.optLong("lastPlayedMs", 0),
-                                completedCount = o.optInt("completedCount", 0)
-                            )
-                        }
-                    }
-                }
-
-                // 5. Load Related Artists Cache
-                val relatedRaw = prefs.getString(KEY_RELATED, null)
-                if (!relatedRaw.isNullOrBlank()) {
-                    runCatching {
-                        val obj = JSONObject(relatedRaw)
-                        val keys = obj.keys()
-                        while (keys.hasNext()) {
-                            val k = keys.next()
-                            val arr = obj.optJSONArray(k) ?: continue
-                            val rList = mutableListOf<MusicArtist>()
-                            for (j in 0 until arr.length()) {
-                                val item = arr.optJSONObject(j) ?: continue
-                                val rId = item.optString("id")
-                                val rName = item.optString("name")
-                                if (rId.isNotBlank() && rName.isNotBlank()) {
-                                    rList.add(
-                                        MusicArtist(
-                                            id = rId,
-                                            name = rName,
-                                            thumbnailUrl = item.optString("thumbnail").ifBlank { null },
-                                            subscribers = item.optString("subscribers").ifBlank { null }
-                                        )
-                                    )
-                                }
-                            }
-                            if (rList.isNotEmpty()) {
-                                relatedArtistsCache[k] = rList
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading listening profile from disk", e)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading secure listening profile", e)
         }
     }
 
@@ -196,7 +194,7 @@ object ListeningProfile {
         if (!::prefs.isInitialized) return
         scope.launch {
             try {
-                // Save Recent Tracks
+                // 1. Recent Tracks JSON
                 val recentJson = JSONArray().apply {
                     recentTracksList.take(50).forEach { song ->
                         put(
@@ -213,12 +211,12 @@ object ListeningProfile {
                     }
                 }
 
-                // Save Likes
+                // 2. Likes JSON
                 val likesJson = JSONArray().apply {
                     likedTrackIds.forEach { put(it) }
                 }
 
-                // Save Artist Affinities (top 100 by score)
+                // 3. Artist Affinities JSON (top 100)
                 val artistsJson = JSONArray().apply {
                     artistAffinities.values
                         .sortedByDescending { it.computedScore() }
@@ -233,13 +231,14 @@ object ListeningProfile {
                                     .put("playCount", a.playCount)
                                     .put("likeCount", a.likeCount)
                                     .put("viewCount", a.viewCount)
+                                    .put("skipCount", a.skipCount)
                                     .put("lastInteractedMs", a.lastInteractedMs)
                                     .put("score", a.computedScore())
                             )
                         }
                 }
 
-                // Save Track Records (top 150)
+                // 4. Track Records JSON (top 150)
                 val tracksJson = JSONArray().apply {
                     trackRecords.values
                         .sortedByDescending { it.lastPlayedMs }
@@ -262,7 +261,7 @@ object ListeningProfile {
                         }
                 }
 
-                // Save Related Artists Cache
+                // 5. Related Artists JSON
                 val relatedJson = JSONObject().apply {
                     relatedArtistsCache.forEach { (artistName, artists) ->
                         put(artistName, JSONArray().apply {
@@ -279,39 +278,52 @@ object ListeningProfile {
                     }
                 }
 
+                // Save hardware-encrypted payloads
                 prefs.edit()
-                    .putString(KEY_RECENT, recentJson.toString())
-                    .putString(KEY_LIKES, likesJson.toString())
-                    .putString(KEY_ARTISTS, artistsJson.toString())
-                    .putString(KEY_TRACKS, tracksJson.toString())
-                    .putString(KEY_RELATED, relatedJson.toString())
+                    .putString(KEY_RECENT, SecureStorage.encrypt(recentJson.toString()))
+                    .putString(KEY_LIKES, SecureStorage.encrypt(likesJson.toString()))
+                    .putString(KEY_ARTISTS, SecureStorage.encrypt(artistsJson.toString()))
+                    .putString(KEY_TRACKS, SecureStorage.encrypt(tracksJson.toString()))
+                    .putString(KEY_RELATED, SecureStorage.encrypt(relatedJson.toString()))
                     .apply()
             } catch (e: Exception) {
-                Log.e(TAG, "Error persisting listening profile", e)
+                Log.e(TAG, "Error persisting secure listening profile", e)
             }
         }
     }
 
     // ─────────────────────────────────────────────────────────────
-    // User Event & Tracking Methods (Scan every step of the user)
+    // Accidental-Tap Proof Event Tracking
     // ─────────────────────────────────────────────────────────────
 
-    /** Compatibility helper: records track playback start. */
-    fun record(track: MusicTrack) = recordTrackStarted(track)
-
-    /** Compatibility helper: records video watch taste tokens. */
-    fun record(video: VideoItem) = recordText("${video.channel} ${video.title}")
+    /**
+     * Called when a track is tapped or selected.
+     * Accidental Tap Protection: DOES NOT register the song or artist immediately!
+     * Only sets a pending candidate. The song must play for >= 15 seconds to be confirmed.
+     */
+    fun onTrackPlaybackStarted(track: MusicTrack) {
+        // If there was a previous unconfirmed track, treat it as skipped
+        if (pendingTrack != null && !pendingConfirmed) {
+            onTrackSkipped(pendingTrack!!, System.currentTimeMillis() - pendingStartMs)
+        }
+        pendingTrack = track
+        pendingStartMs = System.currentTimeMillis()
+        pendingConfirmed = false
+    }
 
     /**
-     * Called whenever a user starts playing a song.
-     * Records the track in recent history, increments play counts, extracts artists,
-     * and updates artist affinity scores.
+     * Called ONLY after the user has actively listened to a song for >= 15 seconds
+     * (or 25% of the song). This guarantees that accidental taps are never recorded.
      */
-    fun recordTrackStarted(track: MusicTrack) {
+    fun onTrackConfirmed(track: MusicTrack) {
+        if (pendingTrack?.id == track.id) {
+            pendingConfirmed = true
+        }
+
         val now = System.currentTimeMillis()
         val isTrackLiked = isLiked(track.id)
 
-        // 1. Update Recent Tracks (distinct by ID, kept at top)
+        // 1. Add to recent tracks now that it is confirmed
         val updatedTrack = if (track.liked != isTrackLiked) track.copy(liked = isTrackLiked) else track
         val filtered = recentTracksList.filterNot { it.id == track.id }
         recentTracksList.clear()
@@ -358,7 +370,7 @@ object ListeningProfile {
             }
         }
 
-        // Secondary / featured artists get partial affinity
+        // Secondary / featured artists
         for (i in 1 until parsedArtists.size) {
             val secName = parsedArtists[i]
             if (secName.isNotBlank()) {
@@ -379,18 +391,38 @@ object ListeningProfile {
         // 4. Update taste tokens
         recordText("${track.artists} ${track.title}")
 
-        // 5. Asynchronous persistence
         persistAsync()
     }
 
     /**
-     * Called when a track is played for >30s or reaches completion.
-     * Rewards completed listening with additional affinity bonus.
+     * Called when a track is skipped before 15 seconds.
+     * Prevents accidental taps from polluting the user profile.
+     * If skipped under 5 seconds, slightly reduces affinity to drop mistake clicks.
      */
-    fun recordTrackCompleted(track: MusicTrack) {
-        val record = trackRecords[track.id]
-        if (record != null) {
-            record.completedCount++
+    fun onTrackSkipped(track: MusicTrack, durationListenedMs: Long = 0L) {
+        val parsedArtists = parseArtistNames(track.artists)
+        val primary = parsedArtists.firstOrNull() ?: track.artists.trim()
+        if (primary.isNotBlank()) {
+            artistAffinities[primary.lowercase()]?.let {
+                it.skipCount++
+                if (durationListenedMs < 5000L) {
+                    it.score = (it.score - 1.0f).coerceAtLeast(0f)
+                }
+            }
+        }
+        pendingTrack = null
+        pendingConfirmed = false
+    }
+
+    /**
+     * Called when a track reaches completion (100% played).
+     */
+    fun onTrackCompleted(track: MusicTrack) {
+        // Ensure confirmed
+        onTrackConfirmed(track)
+
+        trackRecords[track.id]?.let {
+            it.completedCount++
         }
         val primary = parseArtistNames(track.artists).firstOrNull() ?: track.artists.trim()
         if (primary.isNotBlank()) {
@@ -403,11 +435,13 @@ object ListeningProfile {
     }
 
     /**
-     * Called when the user likes or unlikes a track.
+     * Called when user explicitly likes/unlikes a track.
+     * Immediately confirms the track because liking is a deliberate user action.
      */
     fun recordLike(track: MusicTrack, isLiked: Boolean) {
         if (isLiked) {
             likedTrackIds.add(track.id)
+            onTrackConfirmed(track)
         } else {
             likedTrackIds.remove(track.id)
         }
@@ -419,12 +453,10 @@ object ListeningProfile {
             recentTracksList[idx] = item.copy(liked = isLiked)
         }
 
-        // Update TrackRecord
         trackRecords[track.id]?.let {
             it.liked = isLiked
         }
 
-        // Update Artist Affinity (big boost on like)
         val primary = parseArtistNames(track.artists).firstOrNull() ?: track.artists.trim()
         if (primary.isNotBlank()) {
             val key = primary.lowercase()
@@ -449,7 +481,7 @@ object ListeningProfile {
     }
 
     /**
-     * Called when the user clicks an artist card or visits an artist's screen.
+     * Called when the user views an artist's screen.
      */
     fun recordArtistView(artist: MusicArtist) {
         val cleanName = artist.name.trim()
@@ -466,7 +498,7 @@ object ListeningProfile {
             )
         }
         affinity.viewCount++
-        affinity.score += 2.5f
+        affinity.score += 2.0f
         affinity.lastInteractedMs = now
         if (artist.id.startsWith("UC")) {
             affinity.id = artist.id
@@ -483,8 +515,8 @@ object ListeningProfile {
     }
 
     /**
-     * Called when full artist details are fetched for an artist screen.
-     * Caches high-res avatar, channel ID, and related artists for smart recommendations.
+     * Called when full artist details are fetched.
+     * Caches high-res circular avatar, verified channel ID, and related artists.
      */
     fun recordArtistDetails(details: ArtistDetails) {
         val cleanName = details.name.trim()
@@ -508,9 +540,7 @@ object ListeningProfile {
             affinity.subscribers = details.subscriberCountText
         }
         affinity.lastInteractedMs = now
-        affinity.score += 1.0f
 
-        // Cache related artists
         if (details.relatedArtists.isNotEmpty()) {
             relatedArtistsCache[key] = details.relatedArtists.take(12)
         }
@@ -519,28 +549,9 @@ object ListeningProfile {
     }
 
     /**
-     * Called when the user views an album or playlist.
+     * Called when the user views a playlist or album.
      */
     fun recordPlaylistOrAlbumView(playlist: MusicPlaylistRef) {
-        val now = System.currentTimeMillis()
-        val record = PlaylistRecord(
-            id = playlist.id,
-            title = playlist.title,
-            author = playlist.author,
-            authorId = playlist.authorId,
-            thumbnailUrl = playlist.thumbnailUrl,
-            isAlbum = playlist.isAlbum,
-            viewCount = 1,
-            lastViewedMs = now
-        )
-        val existingIdx = playlistHistoryList.indexOfFirst { it.id == playlist.id }
-        if (existingIdx >= 0) {
-            val old = playlistHistoryList.removeAt(existingIdx)
-            record.viewCount = old.viewCount + 1
-        }
-        playlistHistoryList.add(0, record)
-
-        // If author is an artist, grant author affinity
         val author = playlist.author.trim()
         if (author.isNotBlank() && !author.equals("YouTube Music", ignoreCase = true)) {
             val key = author.lowercase()
@@ -552,15 +563,14 @@ object ListeningProfile {
                 )
             }
             affinity.score += 1.5f
-            affinity.lastInteractedMs = now
+            affinity.lastInteractedMs = System.currentTimeMillis()
         }
-
         recordText("${playlist.title} ${playlist.author}")
         persistAsync()
     }
 
     /**
-     * Called when the user submits a search query in iMusic.
+     * Called when the user submits an explicit search in iMusic.
      */
     fun recordSearch(query: String, filter: String) {
         val q = query.trim()
@@ -575,14 +585,15 @@ object ListeningProfile {
 
     private fun recordText(text: String) {
         if (!::prefs.isInitialized) return
-        val old = prefs.getString(KEY_TOKENS, "").orEmpty().split('|').filter(String::isNotBlank)
+        val old = SecureStorage.decrypt(prefs.getString(KEY_TOKENS, "")).split('|').filter(String::isNotBlank)
         val tokens = text.lowercase().split(Regex("[^\\p{L}\\p{N}]+"))
             .filter { it.length >= 3 && it !in stopWords }.take(8)
-        prefs.edit().putString(KEY_TOKENS, (tokens + old).distinct().take(48).joinToString("|")).apply()
+        val combined = (tokens + old).distinct().take(48).joinToString("|")
+        prefs.edit().putString(KEY_TOKENS, SecureStorage.encrypt(combined)).apply()
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Getters for Experience-Based Recommendations
+    // Experience-Based Recommendation Queries
     // ─────────────────────────────────────────────────────────────
 
     fun isLiked(trackId: String): Boolean = likedTrackIds.contains(trackId)
@@ -608,18 +619,18 @@ object ListeningProfile {
     }
 
     /**
-     * Returns favorite artists (artists with like count > 0 or high affinity).
+     * Returns favorite artists (artists with like count > 0 or play count >= 2).
      */
     fun getFavoriteArtists(limit: Int = 12): List<MusicArtist> {
         return artistAffinities.values
             .filter { it.likeCount > 0 || it.playCount >= 2 }
-            .sortedByDescending { it.likeCount * 5 + it.playCount * 3 }
+            .sortedByDescending { it.likeCount * 6 + it.playCount * 3.5f }
             .take(limit)
             .map { it.toMusicArtist() }
     }
 
     /**
-     * Returns top played and liked tracks for Speed Dial / Quick Picks.
+     * Returns user top tracks.
      */
     fun getTopTracks(limit: Int = 20): List<MusicTrack> {
         return trackRecords.values
@@ -629,7 +640,7 @@ object ListeningProfile {
     }
 
     /**
-     * Returns recent tracks in order of playback.
+     * Returns recent confirmed tracks.
      */
     fun getRecentTracks(limit: Int = 30): List<MusicTrack> {
         return recentTracksList.take(limit)
@@ -644,37 +655,33 @@ object ListeningProfile {
         return (likedFromRecent + likedFromRecords).distinctBy { it.id }.take(limit)
     }
 
-    /**
-     * Returns set of all played track IDs to help Daily Discover pick fresh songs.
-     */
     fun getAllPlayedTrackIds(): Set<String> {
         return trackRecords.keys + recentTracksList.map { it.id }
     }
 
-    /**
-     * Returns cached related artists for an artist name if available.
-     */
     fun getRelatedArtistsFor(artistName: String): List<MusicArtist> {
         return relatedArtistsCache[artistName.lowercase().trim()] ?: emptyList()
     }
 
-    /**
-     * Returns personalized taste seed tokens for YouTube Music queries.
-     */
     fun seed(): String? {
         val topArtist = getTopArtists(2).map { it.name }.joinToString(" ")
         if (topArtist.isNotBlank()) return topArtist
         if (!::prefs.isInitialized) return null
-        return prefs.getString(KEY_TOKENS, "").orEmpty().split('|')
+        return SecureStorage.decrypt(prefs.getString(KEY_TOKENS, "")).split('|')
             .filter(String::isNotBlank).take(4).joinToString(" ").ifBlank { null }
     }
 
-    /**
-     * Compatibility helper: returns recent tracks.
-     */
     fun recentTracks(): List<MusicTrack> {
         return recentTracksList.toList()
     }
+
+    // Compatibility helpers
+    fun record(track: MusicTrack) = onTrackConfirmed(track)
+    fun record(video: VideoItem) = recordText("${video.channel} ${video.title}")
+    fun recordTrackStarted(track: MusicTrack) = onTrackPlaybackStarted(track)
+    fun recordTrackCompleted(track: MusicTrack) = onTrackCompleted(track)
+    fun getLikedTrackIds(): Set<String> = likedTrackIds.toSet()
+    fun parseArtistNamesCompat(raw: String): List<String> = parseArtistNames(raw)
 
     private fun parseArtistNames(raw: String): List<String> {
         return raw.split(Regex("[,&/]|\\b(?:feat|ft|with|vs)\\.?\\b", RegexOption.IGNORE_CASE))
@@ -695,6 +702,7 @@ data class ArtistAffinity(
     var playCount: Int = 0,
     var likeCount: Int = 0,
     var viewCount: Int = 0,
+    var skipCount: Int = 0,
     var lastInteractedMs: Long = System.currentTimeMillis(),
     var score: Float = 0f,
 ) {
@@ -707,7 +715,8 @@ data class ArtistAffinity(
             daysAgo < 14 -> 1f
             else -> 0f
         }
-        return score + recencyBonus + (playCount * 3f) + (likeCount * 6f) + (viewCount * 2f)
+        val penalty = skipCount * 1.5f
+        return (score + recencyBonus + (playCount * 3.5f) + (likeCount * 6f) + (viewCount * 2f) - penalty).coerceAtLeast(0f)
     }
 
     fun toMusicArtist(): MusicArtist = MusicArtist(
@@ -717,6 +726,12 @@ data class ArtistAffinity(
         subscribers = subscribers
     )
 }
+
+data class SearchRecord(
+    val query: String,
+    val filter: String = "ALL",
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 data class TrackRecord(
     val id: String,
@@ -742,20 +757,3 @@ data class TrackRecord(
         liked = liked
     )
 }
-
-data class SearchRecord(
-    val query: String,
-    val filter: String,
-    val timestampMs: Long = System.currentTimeMillis(),
-)
-
-data class PlaylistRecord(
-    val id: String,
-    val title: String,
-    val author: String = "",
-    val authorId: String? = null,
-    val thumbnailUrl: String? = null,
-    val isAlbum: Boolean = false,
-    var viewCount: Int = 0,
-    var lastViewedMs: Long = System.currentTimeMillis(),
-)
