@@ -1249,6 +1249,7 @@ enum class SearchCategory {
     Music,
 }
 
+// Filters
 enum class MusicSearchFilter { Songs, Artists, Albums, Playlists }
 
 /** Lives above the tab switcher so results survive switching tabs. */
