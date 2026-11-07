@@ -53,32 +53,35 @@ import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
 import com.github.itube.ui.components.popupScrimColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadSheet(state: PlayerState, onDismiss: () -> Unit) {
     val video = state.current ?: return
-    DownloadSheet(video = video, onDismiss = onDismiss)
+    DownloadSheet(video = video, description = state.details?.description.orEmpty(), onDismiss = onDismiss)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DownloadSheet(video: VideoItem, onDismiss: () -> Unit) {
+fun DownloadSheet(video: VideoItem, description: String = "", onDismiss: () -> Unit) {
     TrackBlurPopup()
     val context = LocalContext.current
     val c = MaterialTheme.colorScheme
 
     var options by remember(video.id) { mutableStateOf<List<DownloadOption>?>(null) }
     var loading by remember(video.id) { mutableStateOf(true) }
+    var loadError by remember(video.id) { mutableStateOf<String?>(null) }
     var pendingOption by remember { mutableStateOf<DownloadOption?>(null) }
+    var resolvedDescription by remember(video.id) { mutableStateOf(description) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         val opt = pendingOption
         if (opt != null) {
-            VideoDownloader.download(context, video.title, opt)
+            VideoDownloader.download(context, video, resolvedDescription, opt)
             Toast.makeText(context, "Download started… check notification", Toast.LENGTH_SHORT).show()
             pendingOption = null
             onDismiss()
@@ -92,7 +95,7 @@ fun DownloadSheet(video: VideoItem, onDismiss: () -> Unit) {
             pendingOption = opt
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            VideoDownloader.download(context, video.title, opt)
+            VideoDownloader.download(context, video, resolvedDescription, opt)
             Toast.makeText(context, "Download started… check notification", Toast.LENGTH_SHORT).show()
             onDismiss()
         }
@@ -100,11 +103,31 @@ fun DownloadSheet(video: VideoItem, onDismiss: () -> Unit) {
 
     LaunchedEffect(video.id) {
         loading = true
-        withContext(Dispatchers.IO) {
-            val cached = StreamCache.get(video.id)
-            val info = cached ?: runCatching { StreamCache.getOrLoad(video.id) }.getOrNull()
-            if (info != null) {
+        loadError = null
+        val info = try {
+            withContext(Dispatchers.IO) {
+                StreamCache.get(video.id) ?: StreamCache.getOrLoad(video.id)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            loadError = error.message?.takeIf { it.isNotBlank() } ?: "Couldn't read download streams for this video."
+            null
+        }
+        if (info != null) {
+            try {
                 options = VideoDownloader.extractOptions(info)
+                if (options.isNullOrEmpty()) loadError = "YouTube didn't provide downloadable qualities for this video."
+                if (resolvedDescription.isBlank()) {
+                    resolvedDescription = info.description?.let { description ->
+                        if (description.type == org.schabi.newpipe.extractor.stream.Description.HTML) {
+                            androidx.core.text.HtmlCompat.fromHtml(description.content, androidx.core.text.HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
+                        } else description.content.trim()
+                    }.orEmpty()
+                }
+            } catch (error: Exception) {
+                options = emptyList()
+                loadError = error.message?.takeIf { it.isNotBlank() } ?: "Couldn't read download qualities for this video."
             }
         }
         loading = false
@@ -187,7 +210,7 @@ fun DownloadSheet(video: VideoItem, onDismiss: () -> Unit) {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "No download streams available for this video",
+                            loadError ?: "No download streams available for this video",
                             color = c.onSurfaceVariant,
                             fontSize = 14.sp
                         )
