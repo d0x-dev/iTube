@@ -203,10 +203,12 @@ fun Modifier.fullscreenGestures(sliders: FullscreenSliders, onPull: (Float) -> U
         val down = awaitFirstDown(requireUnconsumed = false)
         val guard = EdgeGuard.toPx()
         if (down.position.y < guard || down.position.y > size.height - guard) return@awaitEachGesture
+        val isPortrait = size.height > size.width
+        val effectiveSideShare = if (isPortrait) 0.18f else SideShare
         val x = down.position.x / size.width
         val kind = when {
-            x < SideShare -> FullscreenSliders.Kind.Brightness
-            x > 1f - SideShare -> FullscreenSliders.Kind.Volume
+            x < effectiveSideShare -> FullscreenSliders.Kind.Brightness
+            x > 1f - effectiveSideShare -> FullscreenSliders.Kind.Volume
             else -> null
         }
         var over = 0f
@@ -231,7 +233,9 @@ fun Modifier.fullscreenGestures(sliders: FullscreenSliders, onPull: (Float) -> U
                 change.consume()
             }
             onPull(0f)
-            if (finished && (pulled > ExitDistancePx || tracker.calculateVelocity().y > ExitFlick)) onSwipeDown()
+            val exitDist = if (isPortrait) 60f else ExitDistancePx
+            val exitFlick = if (isPortrait) 500f else ExitFlick
+            if (finished && (pulled > exitDist || tracker.calculateVelocity().y > exitFlick)) onSwipeDown()
         }
     }
 }
