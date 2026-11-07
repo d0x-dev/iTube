@@ -1,57 +1,94 @@
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/b7b1c6ba-3f3d-4e56-bb44-099b6ff319de" />
+<img width="100%" alt="iTube Banner" src="https://github.com/user-attachments/assets/b7b1c6ba-3f3d-4e56-bb44-099b6ff319de" />
 
-#                                                  iTube
+<p align="center">
+  <img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/App_Icon_Dark.png" width="120" height="120" alt="iTube App Icon" style="border-radius: 26px;" />
+</p>
 
-An open-source Android app for watching YouTube videos and Shorts, and listening to music. iTube combines video discovery, a full-featured player, and iMusic in one native Android experience.
+# <p align="center">iTube</p>
 
-[![Latest release](https://img.shields.io/github/v/release/d0x-dev/iTube?label=release)](https://github.com/d0x-dev/iTube/releases)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+<p align="center">
+  <b>The Unified Android Experience for Video, Shorts & Music</b><br>
+  An open-source, ad-free streaming client uniting YouTube discovery with an iOS-styled music ecosystem.
+</p>
 
-## Preview
+<p align="center">
+  <a href="https://github.com/d0x-dev/iTube/releases"><img src="https://img.shields.io/github/v/release/d0x-dev/iTube?label=Release&style=flat-square&color=FF0000" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square" alt="License: GPL v3" /></a>
+  <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Platform: Android" />
+  <img src="https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
+</p>
 
-![iTube player preview](https://github.com/user-attachments/assets/eefb57f5-8384-4aa0-8bf2-a47e41231c12)
+---
 
-## Features
+## 📱 Screen Showcase
 
-- Browse and search videos, Shorts, channels, playlists, and music.
-- Watch videos with adjustable playback speed and quality, captions, comments, and a floating mini-player.
-- Explore Shorts in a dedicated swipeable player.
-- Listen with iMusic, background playback, Android media controls, queues, and lyrics.
-- Discover channels, albums, releases, and playlists.
-- Choose light, dark, and AMOLED appearances.
-- Sign in to access supported YouTube account features.
+> [!NOTE]
+> *Swipe or scroll horizontally across the slide gallery to explore the native interface.*
 
-## Install
+| 🎬 **Home Feed** | ⚡ **Video Player** | 📱 **iShorts** | 🎵 **iMusic Feed** | 🎧 **iMusic Player** | 📚 **Library** |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| <a href="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iTube_Screen.png"><img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iTube_Screen.png" width="240" alt="iTube Home Screen" /></a> | <a href="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iTube_Player.png"><img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iTube_Player.png" width="240" alt="iTube Video Player Screen" /></a> | <a href="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iShorts_Screen.png"><img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iShorts_Screen.png" width="240" alt="iShorts Screen" /></a> | <a href="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iMusic_Screen.png"><img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iMusic_Screen.png" width="240" alt="iMusic Feed Screen" /></a> | <a href="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iMusic_Player.png"><img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/iMusic_Player.png" width="240" alt="iMusic Full Player Screen" /></a> | <a href="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/Library_Screen.png"><img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/Library_Screen.png" width="240" alt="Library Screen" /></a> |
 
-Open [GitHub Releases](https://github.com/d0x-dev/iTube/releases) and download the APK attached to the release you want. Release APKs use this filename format:
+---
+
+## ✨ Features
+
+- **Browse & Search**: Explore trending videos, music, channels, playlists, and albums with rich suggestions.
+- **Full-Featured Video Player**: Adjustable resolution up to 4K, custom playback speeds (0.25× to 2.0×), live comments, chapters, and background playback.
+- **iShorts**: Swipeable vertical video player with long-press 2× fast forward, audio extraction, and quality control.
+- **iMusic & Companion Video**: iOS-inspired music player featuring live synchronized lyrics, split history/upcoming queue, audio visualizer, and a seamless switch to companion video mode.
+- **Ultra-Fast Parallel Downloader**: Multi-threaded 2 MB HTTP range chunk engine with automatic retry to bypass CDN bandwidth throttles on 5G/Gigabit connections.
+- **Customizable Appearance**: Light, Dark, and true AMOLED themes with adaptive color palettes extracted from media artwork.
+- **Account Support**: Secure authentication to access subscriptions, liked videos, and playlists.
+
+---
+
+## 📥 Installation
+
+Download the latest release APK from [GitHub Releases](https://github.com/d0x-dev/iTube/releases):
 
 ```text
 iTube_v{TAG}_signed.apk
 ```
 
-For example, the APK for tag `2.0.0` is `iTube_v2.0.0_signed.apk`.
+For instance, download `iTube_v1.0.0_signed.apk` for the `1.0.0` release.
 
-## Build from source
+---
 
-### Requirements
+## 🛠️ Building from Source
 
-- Android Studio with Android SDK 36
-- JDK 17
+### Prerequisites
+- Android Studio Ladybug (or newer)
+- Android SDK 36
+- JDK 17 or higher
 
-Clone the repository and build a debug APK:
-
+### Build Instructions
 ```bash
+# Clone the repository
 git clone https://github.com/d0x-dev/iTube.git
 cd iTube
+
+# Build debug APK (Linux/macOS)
 ./gradlew assembleDebug
+
+# Build debug APK (Windows)
+gradlew.bat assembleDebug
 ```
 
-On Windows, run `gradlew.bat assembleDebug`. The APK is written to `app/build/outputs/apk/debug/iTube.apk`.
+The output APK will be generated at `app/build/outputs/apk/debug/iTube.apk`.
 
-## Tech
+---
 
-iTube is written in Kotlin and uses Jetpack Compose for its interface and AndroidX Media3 for playback. The Android app module is under `app/`.
+## 🏗️ Architecture & Tech Stack
 
-## License
+- **UI Framework**: [Jetpack Compose](https://developer.android.com/jetpack/compose) with Material 3 & custom design tokens
+- **Audio / Video Core**: [AndroidX Media3](https://developer.android.com/guide/topics/media/media3) (ExoPlayer) with custom `OkHttpDataSource`
+- **Networking**: [OkHttp 5](https://square.github.io/okhttp/) & Kotlin Coroutines
+- **Image Loading**: [Coil 3](https://coil-kt.github.io/coil/)
+- **Target OS**: Android 8.0+ (API level 26+)
+
+---
+
+## 📄 License
 
 iTube is distributed under the [GNU General Public License v3.0](LICENSE).
