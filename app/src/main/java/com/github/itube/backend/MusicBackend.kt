@@ -33,17 +33,23 @@ object MusicBackend {
         val sections = mutableListOf<MusicSection>()
 
         val communityPlaylists = mutableListOf<MusicPlaylistRef>()
-        val artistsForYou = mutableListOf<MusicArtist>()
+        val exploreArtists = mutableListOf<MusicArtist>()
+        val homeArtists = mutableListOf<MusicArtist>()
         val fromArtistsYouLove = mutableListOf<MusicPlaylistRef>()
         val newReleases = mutableListOf<MusicPlaylistRef>()
         val mixedForYou = mutableListOf<MusicPlaylistRef>()
-        val popularArtists = mutableListOf<MusicArtist>()
         val topAlbums = mutableListOf<MusicPlaylistRef>()
         val trendingSongs = mutableListOf<MusicTrack>()
         val chartTopArtists = mutableListOf<MusicArtist>()
 
-        // Recent listening profile
+        // Recent listening profile & User history
         val recentTracks = ListeningProfile.recentTracks().take(18)
+        val userTopArtists = ListeningProfile.getTopArtists(12)
+        val userRecentArtists = ListeningProfile.getRecentArtists(12)
+        val userFavoriteArtists = ListeningProfile.getFavoriteArtists(12)
+        val userTopTracks = ListeningProfile.getTopTracks(16)
+        val userRecentTracks = ListeningProfile.getRecentTracks(16)
+
         val personalQuery = chipFilter?.let { "$it music" } ?: ListeningProfile.seed()
 
         if (recentTracks.isNotEmpty()) {
@@ -67,10 +73,10 @@ object MusicBackend {
             }
         }
 
-        // Fetch YouTube Music's Explore and Charts
+        // Fetch YouTube Music's Explore
         try {
             val exploreJson = postInnerTube("FEmusic_explore")
-            parseShelves(exploreJson, sections, quickPicks, communityPlaylists, artistsForYou, newReleases, topAlbums)
+            parseShelves(exploreJson, sections, quickPicks, communityPlaylists, exploreArtists, newReleases, topAlbums)
         } catch (e: Exception) {
             Log.w(TAG, "Error fetching FEmusic_explore: ${e.message}")
         }
@@ -87,7 +93,7 @@ object MusicBackend {
         try {
             val homeJson = postInnerTube("FEmusic_home")
             parseChips(homeJson, chips)
-            parseShelves(homeJson, sections, quickPicks, communityPlaylists, artistsForYou, mixedForYou, fromArtistsYouLove)
+            parseShelves(homeJson, sections, quickPicks, communityPlaylists, homeArtists, mixedForYou, fromArtistsYouLove)
         } catch (e: Exception) {
             Log.w(TAG, "Error fetching FEmusic_home: ${e.message}")
         }
@@ -101,39 +107,150 @@ object MusicBackend {
         val allParsedTracks = sections.flatMap { it.items }
         trendingSongs += allParsedTracks.distinctBy { it.id }.take(20)
 
-        // Speed Dial (3 rows: shuffle tile is item 0 in UI, so 17 tracks needed)
-        val speedDial = (recentTracks + quickPicks + allParsedTracks).distinctBy { it.id }.take(18)
+        // ── 1. Popular Artists (Real chart toppers & trending artists) ──
+        val popularArtists = (chartTopArtists + exploreArtists + homeArtists)
+            .distinctBy { it.name.trim().lowercase() }
+            .take(12)
 
-        // Quick Picks: up to 16 tracks
-        val finalQuickPicks = if (quickPicks.isNotEmpty()) {
-            (quickPicks + allParsedTracks).distinctBy { it.id }.take(16)
-        } else {
-            (recentTracks + allParsedTracks).distinctBy { it.id }.take(16)
+        val popularNamesSet = popularArtists.map { it.name.trim().lowercase() }.toSet()
+
+        // ── 2. Artists For You (Genuine Personalization from User Profile) ──
+        val artistsForYouList = mutableListOf<MusicArtist>()
+
+        if (userTopArtists.isNotEmpty()) {
+            // Include user's favorite, top, and recent artists
+            val userSeeds = (userFavoriteArtists + userTopArtists + userRecentArtists)
+                .distinctBy { it.name.trim().lowercase() }
+            artistsForYouList.addAll(userSeeds)
+
+            // Expand with real related artists for top 2 user artists
+            for (seed in userTopArtists.take(2)) {
+                val cached = ListeningProfile.getRelatedArtistsFor(seed.name)
+                if (cached.isNotEmpty()) {
+                    artistsForYouList.addAll(cached)
+                } else if (seed.id.startsWith("UC")) {
+                    runCatching {
+                        fetchArtistDetails(seed.id)?.relatedArtists
+                    }.getOrNull()?.let { related ->
+                        if (related.isNotEmpty()) {
+                            artistsForYouList.addAll(related)
+                        }
+                    }
+                }
+            }
         }
 
-        // Daily Discover: curated discovery tracks
-        val dailyDiscover = (allParsedTracks.shuffled()).distinctBy { it.id }.take(12)
+        // If user is new or has few artists, provide curated discovery artists that NEVER duplicate popular artists!
+        val distinctCurated = (exploreArtists + homeArtists)
+            .filterNot { it.name.trim().lowercase() in popularNamesSet }
 
-        // Popular Artists (extracted from charts + explore parsed artists)
-        if (popularArtists.isEmpty() && chartTopArtists.isNotEmpty()) {
-            popularArtists += chartTopArtists.take(12)
-        }
-        if (artistsForYou.isEmpty()) {
-            artistsForYou += (popularArtists + chartTopArtists).distinctBy { it.id }.take(12)
-        }
-        if (chartTopArtists.isEmpty() && popularArtists.isNotEmpty()) {
-            chartTopArtists += popularArtists.take(10)
+        if (artistsForYouList.size < 12) {
+            artistsForYouList.addAll(distinctCurated)
         }
 
-        // Favorite artist mix
-        val favoriteArtistMix = if (recentTracks.isNotEmpty()) {
-            val favArtist = recentTracks.first().artists
-            allParsedTracks.filter { it.artists.contains(favArtist, ignoreCase = true) }.take(12).ifEmpty { recentTracks.take(10) }
+        // Fallback diverse genres if still short of 12 (guarantees variety without duplicating popular artists)
+        if (artistsForYouList.size < 8) {
+            runCatching {
+                val indieArtists = searchArtists("Indie").take(6)
+                artistsForYouList.addAll(indieArtists.filterNot { it.name.trim().lowercase() in popularNamesSet })
+            }
+        }
+
+        val finalArtistsForYou = artistsForYouList
+            .distinctBy { it.name.trim().lowercase() }
+            .take(12)
+
+        // ── 3. From Artists You Love (Real releases from user's loved artists) ──
+        if (userTopArtists.isNotEmpty()) {
+            val userArtistReleases = mutableListOf<MusicPlaylistRef>()
+            for (artist in userTopArtists.take(2)) {
+                runCatching {
+                    searchAlbums(artist.name).take(3)
+                }.getOrNull()?.let { albums ->
+                    userArtistReleases.addAll(albums)
+                }
+            }
+            if (userArtistReleases.isNotEmpty()) {
+                fromArtistsYouLove.clear()
+                fromArtistsYouLove.addAll(userArtistReleases)
+            }
+        }
+
+        // ── 4. Mixed For You (Personalized mixes based on user taste) ──
+        if (userTopArtists.isNotEmpty()) {
+            val personalMixes = mutableListOf<MusicPlaylistRef>()
+            val top1 = userTopArtists.getOrNull(0)
+            val top2 = userTopArtists.getOrNull(1)
+            if (top1 != null) {
+                personalMixes.add(
+                    MusicPlaylistRef(
+                        id = "RDAMVM_${top1.id}",
+                        title = "${top1.name} Mix",
+                        author = "Made for you",
+                        thumbnailUrl = top1.thumbnailUrl,
+                        isAlbum = false
+                    )
+                )
+            }
+            if (top2 != null) {
+                personalMixes.add(
+                    MusicPlaylistRef(
+                        id = "RDAMVM_${top2.id}",
+                        title = "${top2.name} Mix",
+                        author = "Made for you",
+                        thumbnailUrl = top2.thumbnailUrl,
+                        isAlbum = false
+                    )
+                )
+            }
+            personalMixes.add(
+                MusicPlaylistRef(
+                    id = "RDAMVM_discover",
+                    title = "Discover Mix",
+                    author = "Daily discovery",
+                    thumbnailUrl = top1?.thumbnailUrl ?: mixedForYou.firstOrNull()?.thumbnailUrl,
+                    isAlbum = false
+                )
+            )
+            mixedForYou.addAll(0, personalMixes)
+        }
+
+        // ── 5. Speed Dial (User's top & recent tracks first) ──
+        val speedDial = (userTopTracks + userRecentTracks + recentTracks + quickPicks + allParsedTracks)
+            .distinctBy { it.id }
+            .take(18)
+
+        // ── 6. Quick Picks (Radio picks from last track + user favorites) ──
+        val lastTrack = userRecentTracks.firstOrNull() ?: recentTracks.firstOrNull()
+        val radioPicks = if (lastTrack != null) {
+            runCatching { relatedTracks(lastTrack).take(8) }.getOrDefault(emptyList())
+        } else emptyList()
+
+        val finalQuickPicks = (radioPicks + quickPicks + userTopTracks + allParsedTracks)
+            .distinctBy { it.id }
+            .take(16)
+
+        // ── 7. Daily Discover (Unheard songs tailored to taste) ──
+        val playedTrackIds = ListeningProfile.getAllPlayedTrackIds()
+        val freshTracks = allParsedTracks.filterNot { it.id in playedTrackIds }
+        val dailyDiscover = (freshTracks.shuffled() + allParsedTracks.shuffled())
+            .distinctBy { it.id }
+            .take(12)
+
+        // ── 8. Favorite Artist Mix (Tracks from #1 favorite artist) ──
+        val favoriteArtistMix = if (userTopArtists.isNotEmpty()) {
+            val favArtist = userTopArtists.first()
+            val tracks = runCatching { searchMusic(favArtist.name).take(12) }.getOrDefault(emptyList())
+            if (tracks.isNotEmpty()) tracks else allParsedTracks.take(10)
+        } else if (popularArtists.isNotEmpty()) {
+            val topChartArtist = popularArtists.first()
+            val tracks = runCatching { searchMusic(topChartArtist.name).take(12) }.getOrDefault(emptyList())
+            if (tracks.isNotEmpty()) tracks else allParsedTracks.take(10)
         } else {
             allParsedTracks.take(10)
         }
 
-        // Energize Vibe
+        // Energize Vibe & More From
         val energizeVibe = allParsedTracks.shuffled().take(12)
         val moreFrom = allParsedTracks.takeLast(12)
 
@@ -144,11 +261,11 @@ object MusicBackend {
             dailyDiscover = dailyDiscover,
             communityPlaylists = communityPlaylists.distinctBy { it.id }.take(12),
             moodsAndGenres = fetchMoodsAndGenres(),
-            artistsForYou = popularArtists.distinctBy { it.id }.take(12),
+            artistsForYou = finalArtistsForYou,
             fromArtistsYouLove = fromArtistsYouLove.distinctBy { it.id }.take(12),
             newReleases = newReleases.distinctBy { it.id }.take(12),
             mixedForYou = mixedForYou.distinctBy { it.id }.take(12),
-            popularArtists = popularArtists.distinctBy { it.id }.take(12),
+            popularArtists = popularArtists,
             topAlbums = topAlbums.distinctBy { it.id }.take(12),
             favoriteArtistMix = favoriteArtistMix,
             moreFrom = moreFrom,
