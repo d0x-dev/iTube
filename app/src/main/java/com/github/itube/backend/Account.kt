@@ -32,7 +32,13 @@ data class ChannelRef(val id: String, val name: String, val avatar: String?)
 
 /** One page of a feed plus the token for the next page, if any. */
 @Immutable
-data class FeedPage(val videos: List<VideoItem>, val next: String?)
+data class FeedPage(
+    val videos: List<VideoItem>,
+    val next: String?,
+    val recommendations: List<VideoItem> = emptyList(),
+    /** Playlist and Mix cards present in the Home feed; tapping one can queue its full contents. */
+    val collections: List<PublicCollection> = emptyList(),
+)
 
 enum class LikeStatus { Like, Dislike, None }
 
@@ -243,10 +249,46 @@ object InnerTube {
 
     suspend fun browse(browseId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
         val body = if (continuation != null) JSONObject().put("continuation", continuation) else JSONObject().put("browseId", browseId)
-        parseFeed(post("browse", body))
+        // YouTube represents Shorts inside playlists with Shorts-specific renderers. Keep the
+        // normal video feeds free of duplicate Shorts, but include them when opening a playlist.
+        parseFeed(post("browse", body), includeShorts = browseId.startsWith("VL"))
     }
 
-    suspend fun home(next: String? = null) = browse("FEwhat_to_watch", next)
+    suspend fun home(next: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val body = if (next != null) JSONObject().put("continuation", next)
+        else JSONObject().put("browseId", "FEwhat_to_watch")
+        val root = postAny("browse", body)
+        parseFeed(root).copy(collections = if (next == null) parseHomeCollections(root) else emptyList())
+    }
+
+    /** Real playlist and auto-Mix shelves from the signed-in Home response. */
+    private fun parseHomeCollections(root: JSONObject): List<PublicCollection> {
+        val out = LinkedHashMap<String, PublicCollection>()
+        root.walk { key, obj ->
+            val isMix = key == "radioRenderer" || key == "compactRadioRenderer"
+            val isPlaylist = key == "playlistRenderer" || key == "gridPlaylistRenderer" ||
+                (key == "lockupViewModel" && obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_PLAYLIST")
+            if (!isMix && !isPlaylist) return@walk
+            val id = when (key) {
+                "lockupViewModel" -> obj.optString("contentId")
+                else -> obj.optString("playlistId")
+            }.ifBlank { return@walk }
+            val metadata = obj.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
+            val title = if (key == "lockupViewModel") {
+                metadata?.optJSONObject("title")?.optString("content").orEmpty()
+            } else obj.text("title").orEmpty()
+            val mix = isMix || id.startsWith("RD")
+            val thumbnail = obj.thumbnails()?.lastOrNull() ?: obj.firstImageSource()
+            val collection = PublicCollection(
+                url = "https://www.youtube.com/playlist?list=$id",
+                title = title.ifBlank { if (mix) "YouTube Mix" else "Playlist" },
+                subtitle = if (mix) "Mix" else "Playlist",
+                thumbnail = thumbnail,
+            )
+            out.putIfAbsent(collection.url, collection)
+        }
+        return out.values.toList()
+    }
 
     /** A channel's uploads (Videos tab), members-only ones filtered out like everywhere else. */
     suspend fun channelVideos(channelId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
@@ -287,6 +329,7 @@ object InnerTube {
                         durationSec = 0L,
                         views = parseViews(viewsStr),
                         uploaded = null,
+                        isShort = true,
                     )
                 }
             } else if (key == "reelItemRenderer") {
@@ -303,6 +346,7 @@ object InnerTube {
                         durationSec = 0L,
                         views = parseViews(viewsStr),
                         uploaded = null,
+                        isShort = true,
                     )
                 }
             }
@@ -365,6 +409,14 @@ object InnerTube {
         }
         val browseId = if (cleanId.startsWith("VL")) cleanId else "VL$cleanId"
         val root = postAny("browse", JSONObject().put("browseId", browseId))
+        val pages = mutableListOf(root)
+        var continuation = parsePlaylistFeed(root).next
+        var pageCount = 0
+        while (continuation != null && pageCount++ < 100) {
+            val page = runCatching { postAny("browse", JSONObject().put("continuation", continuation)) }.getOrNull() ?: break
+            pages += page
+            continuation = parsePlaylistFeed(page).next
+        }
 
         var title = ""
         var author = ""
@@ -399,7 +451,7 @@ object InnerTube {
         }
 
         val videos = mutableListOf<VideoItem>()
-        root.walk { key, obj ->
+        pages.forEach { page -> page.walk { key, obj ->
             if (key == "lockupViewModel" && obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
                 val vid = obj.optString("contentId").ifBlank { return@walk }
                 val meta = obj.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel")
@@ -448,15 +500,18 @@ object InnerTube {
                     )
                 }
             }
-        }
+        } }
         val distinctVideos = videos.distinctBy { it.id }
-        if (thumb == null) thumb = distinctVideos.firstOrNull()?.thumbnail
+        val directIds = pages.flatMap { page -> parsePlaylistFeed(page).videos }.mapTo(HashSet()) { it.id }
+        val playlistVideos = if (directIds.isEmpty()) distinctVideos else distinctVideos.filter { it.id in directIds }
+        val recommendations = if (directIds.isEmpty()) emptyList() else distinctVideos.filter { it.id !in directIds }
+        if (thumb == null) thumb = playlistVideos.firstOrNull()?.thumbnail
 
         val finalSub = listOfNotNull(
             author.removePrefix("by ").removePrefix("By ").takeIf { it.isNotBlank() },
             sub.takeIf { it.isNotBlank() },
             if (isAlbum) "Album" else "Playlist",
-            "${distinctVideos.size} songs"
+            "${playlistVideos.size} songs"
         ).distinct().joinToString(" · ")
 
         val collection = PublicCollection(
@@ -469,12 +524,18 @@ object InnerTube {
         PublicCollectionDetails(
             collection = collection,
             description = "",
-            videos = distinctVideos,
+            videos = playlistVideos,
+            recommendations = recommendations,
         )
     }
     suspend fun subscriptionsFeed(next: String? = null) = browse("FEsubscriptions", next)
     suspend fun history(next: String? = null) = browse("FEhistory", next)
-    suspend fun playlist(id: String, next: String? = null) = browse("VL$id", next)
+    suspend fun playlist(id: String, next: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val browseId = if (id.startsWith("VL")) id else "VL$id"
+        val body = if (next == null) JSONObject().put("browseId", browseId) else JSONObject().put("continuation", next)
+        val root = postAny("browse", body)
+        parsePlaylistFeed(root)
+    }
 
     suspend fun channels(): List<ChannelRef> = withContext(Dispatchers.IO) {
         val out = LinkedHashMap<String, ChannelRef>()
@@ -514,6 +575,11 @@ object InnerTube {
             }
         }
         out.values.filterNot { it.id == "WL" || it.id == "LL" }
+    }
+
+    suspend fun deletePlaylist(playlistId: String) = withContext(Dispatchers.IO) {
+        post("playlist/delete", JSONObject().put("playlistId", playlistId))
+        Unit
     }
 
     /**
@@ -725,6 +791,7 @@ object InnerTube {
         id = id, title = "", channel = "", channelUrl = null,
         thumbnail = frame ?: "https://i.ytimg.com/vi/$id/oar2.jpg",
         avatar = null, durationSec = 0, views = 0, uploaded = null,
+        isShort = true,
     )
 
     // ── Writes ─────────────────────────────────────────────────────────────────
@@ -797,11 +864,11 @@ object InnerTube {
         }
     }
 
-    /** A new playlist holding [videoId]; returns its id. [privacy]: PRIVATE, UNLISTED or PUBLIC. */
-    suspend fun createPlaylist(title: String, privacy: String, videoId: String): String = withContext(Dispatchers.IO) {
+    /** Creates an empty playlist; the caller adds exactly the selected item after creation. */
+    suspend fun createPlaylist(title: String, privacy: String): String = withContext(Dispatchers.IO) {
         val answer = post(
             "playlist/create",
-            JSONObject().put("title", title).put("privacyStatus", privacy).put("videoIds", JSONArray().put(videoId)),
+            JSONObject().put("title", title).put("privacyStatus", privacy),
         )
         answer.optString("playlistId").ifBlank { throw IOException("YouTube didn't create the playlist") }
     }
@@ -865,9 +932,10 @@ object InnerTube {
 
     /**
      * Pulls every video out of a browse response, whichever renderer YouTube used:
-     * the classic videoRenderer family or the newer lockupViewModel. Shorts are skipped.
+     * the classic videoRenderer family or the newer lockupViewModel. Shorts are included only
+     * for playlists, where they are valid saved items and need to open from the account library.
      */
-    internal fun parseFeed(root: JSONObject): FeedPage {
+    internal fun parseFeed(root: JSONObject, includeShorts: Boolean = false): FeedPage {
         val videos = LinkedHashMap<String, VideoItem>()
         var next: String? = null
         root.walk { key, obj ->
@@ -879,6 +947,12 @@ object InnerTube {
                 "lockupViewModel" -> if (obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO" && !isMembersOnly(obj) && !isMovie(obj)) {
                     parseLockup(obj)?.let { videos.putIfAbsent(it.id, it) }
                 }
+                "shortsLockupViewModel" -> if (includeShorts) {
+                    parseShortsLockup(obj)?.let { videos.putIfAbsent(it.id, it) }
+                }
+                "reelItemRenderer" -> if (includeShorts) {
+                    parseReelItem(obj)?.let { videos.putIfAbsent(it.id, it) }
+                }
                 // Only the feed's own "load more" item (old and new names); chip filters
                 // carry tokens too and must not be mistaken for the next page.
                 "continuationItemRenderer", "continuationItemViewModel" ->
@@ -886,6 +960,74 @@ object InnerTube {
             }
         }
         return FeedPage(videos.values.toList(), next)
+    }
+
+    /** Keeps the playlist's own video list separate from browse-page recommendations. */
+    internal fun parsePlaylistFeed(root: JSONObject): FeedPage {
+        val all = parseFeed(root, includeShorts = true)
+        val lists = mutableListOf<JSONObject>()
+        root.walk { key, obj -> if (key == "playlistVideoListRenderer") lists += obj }
+        val direct = LinkedHashMap<String, VideoItem>()
+        var next: String? = null
+        if (lists.isNotEmpty()) {
+            lists.forEach { list ->
+                val page = parseFeed(list, includeShorts = true)
+                page.videos.forEach { direct.putIfAbsent(it.id, it) }
+                if (page.next != null) next = page.next
+            }
+        } else {
+            // Older account playlist responses don't wrap entries in a playlistVideoListRenderer.
+            // The playlistVideoRenderer key still distinguishes the actual saved tracks from
+            // the generic videoRenderer / lockup recommendation shelves around them.
+            root.walk { key, obj ->
+                if (key == "playlistVideoRenderer" && !isMembersOnly(obj) && !isMovie(obj)) {
+                    parseVideoRenderer(obj)?.let { direct.putIfAbsent(it.id, it) }
+                }
+            }
+        }
+        if (direct.isEmpty()) return all
+        return FeedPage(
+            videos = direct.values.toList(),
+            next = next,
+            recommendations = all.videos.filterNot { it.id in direct },
+        )
+    }
+
+    private fun parseShortsLockup(o: JSONObject): VideoItem? {
+        var id = o.optString("entityId").removePrefix("shorts-shelf-item-")
+        if (id.isBlank()) {
+            val url = o.optJSONObject("onTap")?.optJSONObject("innertubeCommand")
+                ?.optJSONObject("commandMetadata")?.optJSONObject("webCommandMetadata")?.optString("url").orEmpty()
+            if (url.contains("/shorts/")) id = url.substringAfter("/shorts/").substringBefore('?')
+        }
+        if (id.isBlank()) return null
+        val metadata = o.optJSONObject("overlayMetadata")
+        return VideoItem(
+            id = id,
+            title = metadata?.optJSONObject("primaryText")?.optString("content").orEmpty().ifBlank { "Short" },
+            channel = "",
+            thumbnail = o.collectStrings("url").firstOrNull { it.contains("ytimg") || it.contains("googleusercontent") }
+                ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            durationSec = 0L,
+            views = parseViews(metadata?.optJSONObject("secondaryText")?.optString("content")),
+            uploaded = null,
+            isShort = true,
+        )
+    }
+
+    private fun parseReelItem(o: JSONObject): VideoItem? {
+        val id = o.optString("videoId").ifBlank { return null }
+        return VideoItem(
+            id = id,
+            title = o.text("headline") ?: o.text("title") ?: "Short",
+            channel = o.text("shortBylineText") ?: "",
+            thumbnail = o.collectStrings("url").firstOrNull { it.contains("ytimg") || it.contains("googleusercontent") }
+                ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            durationSec = 0L,
+            views = parseViews(o.text("viewCountText")),
+            uploaded = null,
+            isShort = true,
+        )
     }
 
     /** YouTube's "Members only" badge: BADGE_MEMBERS_ONLY (lockups) / BADGE_STYLE_TYPE_MEMBERS_ONLY (older renderers). */
@@ -932,6 +1074,11 @@ object InnerTube {
         val avatar = o.optJSONObject("channelThumbnailSupportedRenderers")
             ?.optJSONObject("channelThumbnailWithLinkRenderer")?.thumbnails()?.lastOrNull()
             ?: o.optJSONObject("channelThumbnail")?.thumbnails()?.lastOrNull()
+        val durSec = parseDuration(duration)
+        val isShort = o.optJSONObject("navigationEndpoint")?.optJSONObject("reelWatchEndpoint") != null ||
+            o.optJSONObject("navigationEndpoint")?.optJSONObject("commandMetadata")?.optJSONObject("webCommandMetadata")?.optString("url")?.contains("/shorts/") == true ||
+            o.collectStrings("style").any { it.contains("SHORTS") } ||
+            (durSec in 1..60 && (duration == "SHORTS" || o.collectStrings("text").any { it.equals("SHORTS", ignoreCase = true) }))
         return VideoItem(
             id = id,
             title = o.text("title") ?: return null,
@@ -939,9 +1086,10 @@ object InnerTube {
             channelUrl = channelId?.takeIf { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = "https://i.ytimg.com/vi/$id/hqdefault.jpg",
             avatar = avatar?.let(::absoluteUrl),
-            durationSec = parseDuration(duration),
+            durationSec = durSec,
             views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") }),
             uploaded = o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") },
+            isShort = isShort,
         )
     }
 
@@ -959,6 +1107,9 @@ object InnerTube {
         }
         val avatar = meta.optJSONObject("image")?.collectStrings("url")?.firstOrNull()
         val duration = o.optJSONObject("contentImage")?.collectStrings("text")?.firstOrNull { DURATION.matches(it) }
+        val durSec = parseDuration(duration)
+        val isShort = o.optString("contentType") == "LOCKUP_CONTENT_TYPE_SHORTS" ||
+            o.collectStrings("url").any { it.contains("/shorts/") }
         return VideoItem(
             id = id,
             title = title,
@@ -966,9 +1117,10 @@ object InnerTube {
             channelUrl = o.collectStrings("browseId").firstOrNull { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = "https://i.ytimg.com/vi/$id/hqdefault.jpg",
             avatar = avatar?.let(::absoluteUrl),
-            durationSec = parseDuration(duration),
+            durationSec = durSec,
             views = parseViews(parts.firstOrNull { it.contains("view") }),
             uploaded = parts.firstOrNull { it.contains("ago") },
+            isShort = isShort,
         )
     }
 
