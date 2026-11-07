@@ -5,10 +5,14 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.view.HapticFeedbackConstants
+import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +27,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,11 +49,16 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +74,7 @@ import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
 import com.github.itube.ui.components.popupScrimColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -83,11 +95,16 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import com.github.itube.CommentsPanel
 import com.github.itube.CommentsState
@@ -95,9 +112,13 @@ import com.github.itube.DownloadSheet
 import com.github.itube.MusicPlayerState
 import com.github.itube.MusicTrack
 import com.github.itube.R
+import com.github.itube.StreamCache
 import com.github.itube.VideoItem
 import com.github.itube.highQualityThumbnail
 import com.github.itube.ui.components.WavySlider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * AirBeats Immersive Refresh Music Player Screen.
@@ -123,9 +144,97 @@ fun IosStyledPlayer(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
+
+    // Video Mode States
+    var isVideoMode by remember { mutableStateOf(false) }
+    var isVideoFullscreen by remember { mutableStateOf(false) }
+    var isVideoLoading by remember { mutableStateOf(false) }
+    var availableQualities by remember { mutableStateOf<List<VideoQualityOption>>(emptyList()) }
+    var selectedQuality by remember { mutableStateOf<VideoQualityOption?>(null) }
+    var showQualitySheet by remember { mutableStateOf(false) }
+
+    val videoPlayer = remember(context) {
+        ExoPlayer.Builder(context).build().apply {
+            volume = 0f // Mute! Audio is handled by MusicPlayerState
+            repeatMode = Player.REPEAT_MODE_OFF
+        }
+    }
+
+    DisposableEffect(videoPlayer) {
+        onDispose {
+            videoPlayer.release()
+        }
+    }
+
+    // Load video stream when video mode is active, or track changes, or quality changes
+    LaunchedEffect(track.id, isVideoMode, selectedQuality) {
+        if (!isVideoMode) {
+            videoPlayer.pause()
+            return@LaunchedEffect
+        }
+        isVideoLoading = true
+        try {
+            val info = withContext(Dispatchers.IO) {
+                StreamCache.get(track.id) ?: StreamCache.getOrLoad(track.id)
+            }
+            val allVideoStreams = (info.videoOnlyStreams + info.videoStreams)
+                .filter { it.isUrl && it.height > 0 }
+                .distinctBy { it.height }
+                .sortedByDescending { it.height }
+
+            val qualityOptions = allVideoStreams.map { s ->
+                VideoQualityOption(height = s.height, label = "${s.height}p", url = s.content)
+            }
+            availableQualities = qualityOptions
+
+            val chosenStream = if (selectedQuality != null) {
+                qualityOptions.firstOrNull { it.height == selectedQuality!!.height } ?: qualityOptions.firstOrNull()
+            } else {
+                qualityOptions.firstOrNull { it.height == 720 }
+                    ?: qualityOptions.firstOrNull { it.height <= 1080 }
+                    ?: qualityOptions.firstOrNull()
+            }
+
+            if (chosenStream != null) {
+                val mediaItem = MediaItem.fromUri(chosenStream.url)
+                videoPlayer.setMediaItem(mediaItem)
+                videoPlayer.prepare()
+                videoPlayer.seekTo(MusicPlayerState.positionMs)
+                if (MusicPlayerState.isPlaying) videoPlayer.play() else videoPlayer.pause()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("IosStyledPlayer", "Failed to load video stream for ${track.id}: ${e.message}")
+        } finally {
+            isVideoLoading = false
+        }
+    }
+
+    // Play / Pause sync
+    LaunchedEffect(isPlaying) {
+        if (isVideoMode) {
+            if (isPlaying) videoPlayer.play() else videoPlayer.pause()
+        }
+    }
+
+    // Periodic time drift sync
+    LaunchedEffect(isVideoMode, isPlaying) {
+        while (isVideoMode && isPlaying) {
+            delay(1200)
+            val audioPos = MusicPlayerState.positionMs
+            val videoPos = videoPlayer.currentPosition
+            if (kotlin.math.abs(audioPos - videoPos) > 400L) {
+                videoPlayer.seekTo(audioPos)
+            }
+        }
+    }
 
     BackHandler(enabled = MusicPlayerState.expanded) {
-        onCollapse()
+        if (isVideoFullscreen) {
+            isVideoFullscreen = false
+        } else {
+            onCollapse()
+        }
     }
 
     var isSeeking by remember { mutableStateOf(false) }
@@ -144,19 +253,33 @@ fun IosStyledPlayer(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // ── 1. Full Screen High Quality Artwork Backdrop with Lower Blur Effect ──
-        AsyncImage(
-            model = track.thumbnailUrl?.highQualityThumbnail(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = 1.05f
-                    scaleY = 1.05f
-                    alpha = 0.85f
-                }
-        )
+        // ── 1. Full Screen High Quality Artwork / Fullscreen Video Backdrop with Lower Blur Effect ──
+        if (isVideoMode && isVideoFullscreen) {
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).apply {
+                        videoPlayer.setVideoTextureView(this)
+                    }
+                },
+                update = {
+                    videoPlayer.setVideoTextureView(it)
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            AsyncImage(
+                model = track.thumbnailUrl?.highQualityThumbnail(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.05f
+                        scaleY = 1.05f
+                        alpha = 0.85f
+                    }
+            )
+        }
 
         // Lower Ambient Blur Layer (AirBeats Immersive Backdrop mask)
         AsyncImage(
@@ -207,7 +330,96 @@ fun IosStyledPlayer(
                 )
         )
 
-        // ── 2. Top Navigation Bar (Collapse Chevron & 3-Dot More Menu) ──
+        // ── Square Video Window (When in Video Mode, not fullscreen) ──
+        if (isVideoMode && !isVideoFullscreen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 74.dp, bottom = 320.dp, start = 24.dp, end = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color.Black)
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            TextureView(ctx).apply {
+                                videoPlayer.setVideoTextureView(this)
+                            }
+                        },
+                        update = {
+                            videoPlayer.setVideoTextureView(it)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    if (isVideoLoading) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+
+                    // Top-right Quality Badge Button
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color.Black.copy(alpha = 0.65f),
+                        onClick = { showQualitySheet = true },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.HighQuality,
+                                contentDescription = "Quality",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = selectedQuality?.label ?: "Auto",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    // Bottom-right Fullscreen Toggle Button
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.65f),
+                        onClick = { isVideoFullscreen = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(10.dp)
+                            .size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = Icons.Rounded.Fullscreen,
+                                contentDescription = "Fullscreen",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 2. Top Navigation Bar (Collapse Chevron, Song/Video Switch Pill, More Menu) ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -228,16 +440,42 @@ fun IosStyledPlayer(
                 )
             }
 
-            IconButton(
-                onClick = { optionsOpen = true },
-                modifier = Modifier.size(44.dp)
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.more_horiz),
-                    contentDescription = "More Options",
-                    colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.92f)),
-                    modifier = Modifier.size(28.dp)
-                )
+            // Top Song / Video Switch Pill
+            MusicVideoSwitchPill(
+                isVideoMode = isVideoMode,
+                onToggle = { toVideo ->
+                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    isVideoMode = toVideo
+                    if (!toVideo) isVideoFullscreen = false
+                }
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isVideoMode && isVideoFullscreen) {
+                    IconButton(
+                        onClick = { isVideoFullscreen = false },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.FullscreenExit,
+                            contentDescription = "Exit Fullscreen",
+                            tint = Color.White.copy(alpha = 0.95f),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { optionsOpen = true },
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.more_horiz),
+                        contentDescription = "More Options",
+                        colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.92f)),
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
         }
 
@@ -348,9 +586,15 @@ fun IosStyledPlayer(
                 onValueChange = {
                     isSeeking = true
                     seekPosition = it.toLong().coerceIn(0L, safeDuration)
+                    if (isVideoMode) {
+                        videoPlayer.seekTo(seekPosition)
+                    }
                 },
                 onValueChangeFinished = {
                     MusicPlayerState.seekTo(seekPosition)
+                    if (isVideoMode) {
+                        videoPlayer.seekTo(seekPosition)
+                    }
                     isSeeking = false
                 },
                 valueRange = 0f..safeDuration.toFloat(),
@@ -597,6 +841,16 @@ fun IosStyledPlayer(
             DownloadSheet(
                 video = track.asVideoItem(),
                 onDismiss = { showDownloadSheet = false }
+            )
+        }
+
+        // ── 7. Video Quality Sheet Overlay ──
+        if (showQualitySheet) {
+            VideoQualitySheet(
+                qualities = availableQualities,
+                selected = selectedQuality,
+                onSelect = { selectedQuality = it },
+                onDismiss = { showQualitySheet = false }
             )
         }
     }
@@ -916,3 +1170,187 @@ private fun MusicTrack.asVideoItem(): VideoItem = VideoItem(
     views = 0L,
     uploaded = null,
 )
+
+/**
+ * Top pill toggle switch between Song (Headphones) and Video mode.
+ * Matches YouTube Music's iconic player switch.
+ */
+@Composable
+fun MusicVideoSwitchPill(
+    isVideoMode: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val thumbOffset by animateDpAsState(
+        targetValue = if (isVideoMode) 48.dp else 4.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.82f),
+        label = "pillThumb"
+    )
+
+    Box(
+        modifier = modifier
+            .width(96.dp)
+            .height(40.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.52f))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) {
+                onToggle(!isVideoMode)
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Sliding Thumb
+        Box(
+            modifier = Modifier
+                .padding(start = thumbOffset)
+                .size(width = 44.dp, height = 32.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(alpha = 0.24f)),
+        )
+
+        // Icons Row
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left: Audio/Headphones (Song mode)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (isVideoMode) onToggle(false)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Headphones,
+                    contentDescription = "Song Mode",
+                    tint = if (!isVideoMode) Color.White else Color.White.copy(alpha = 0.45f),
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
+            // Right: Video (Video mode)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (!isVideoMode) onToggle(true)
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.SmartDisplay,
+                    contentDescription = "Video Mode",
+                    tint = if (isVideoMode) Color.White else Color.White.copy(alpha = 0.45f),
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+        }
+    }
+}
+
+data class VideoQualityOption(
+    val height: Int,
+    val label: String,
+    val url: String,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VideoQualitySheet(
+    qualities: List<VideoQualityOption>,
+    selected: VideoQualityOption?,
+    onSelect: (VideoQualityOption?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    TrackBlurPopup()
+    val c = MaterialTheme.colorScheme
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = c.surfaceContainerHigh,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = "Video Quality",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = c.onSurface,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            // Auto Option
+            QualityOptionRow(
+                label = "Auto (Recommended)",
+                isSelected = selected == null,
+                onClick = {
+                    onSelect(null)
+                    onDismiss()
+                }
+            )
+
+            qualities.forEach { opt ->
+                QualityOptionRow(
+                    label = "${opt.label}${if (opt.height >= 720) " (HD)" else ""}",
+                    isSelected = selected?.height == opt.height,
+                    onClick = {
+                        onSelect(opt)
+                        onDismiss()
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun QualityOptionRow(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            ),
+            color = if (isSelected) c.primary else c.onSurface
+        )
+        if (isSelected) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = c.primary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
