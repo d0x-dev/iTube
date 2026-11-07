@@ -182,7 +182,7 @@ fun iMusicArtistScreen(
                                 .background(
                                     Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.Black.copy(alpha = 0.40f),
+                                            Color.Black.copy(alpha = 0.45f),
                                             Color.Transparent
                                         )
                                     )
