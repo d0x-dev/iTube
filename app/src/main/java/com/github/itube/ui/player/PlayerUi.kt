@@ -6,9 +6,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -62,6 +61,7 @@ import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.outlined.ContentCopy
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.VideoRowSkeleton
@@ -77,6 +77,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,20 +93,25 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.exp
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.DropdownMenu
@@ -173,6 +179,7 @@ fun PlayerScreen(
     onOpen: (VideoItem) -> Unit,
     onCollapse: () -> Unit,
     onFullscreen: () -> Unit,
+    onPortraitFullscreen: () -> Unit,
     /** Room the floating player bar (the nav pill over the player) takes at the bottom. */
     bottomClearance: androidx.compose.ui.unit.Dp,
 ) {
@@ -194,6 +201,81 @@ fun PlayerScreen(
     // lands in the mini-player. With the controls on the video (PlayerControls) it never folds:
     // the audio stage holds them (VideoStage).
     val reduced = rememberReducedMotion()
+    val scope = rememberCoroutineScope()
+    val enterPortraitFullscreen by rememberUpdatedState(onPortraitFullscreen)
+    val portraitFsPull = remember { Animatable(0f) }
+
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val stageTopGapPx = with(density) { (top + StageTopGap).toPx() }
+    val stageHeightPx = with(density) {
+        val stageWidthDp = configuration.screenWidthDp.dp - StageSideGap * 2
+        (stageWidthDp / state.stageAspect).toPx()
+    }
+    val portraitFsTravelPx = remember(screenHeightPx, stageTopGapPx, stageHeightPx) {
+        ((screenHeightPx - stageHeightPx) / 2f - stageTopGapPx).coerceAtLeast(140f)
+    }
+
+    val detailsPull = remember(portraitFsTravelPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = available.y
+                val current = portraitFsPull.value
+                // When finger reverses direction while pulling down:
+                if (source == NestedScrollSource.UserInput && delta < 0f && current > 0f) {
+                    val maxConsumable = current * portraitFsTravelPx
+                    val consumed = maxOf(delta, -maxConsumable)
+                    val next = (current + consumed / portraitFsTravelPx).coerceIn(0f, 1f)
+                    scope.launch { portraitFsPull.snapTo(next) }
+                    return Offset(0f, consumed)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                // Overscroll pull at the top of the details list:
+                if (source == NestedScrollSource.UserInput && available.y > 0f && morph.progress.value >= 0.99f) {
+                    val current = portraitFsPull.value
+                    if (current < 1f) {
+                        val delta = available.y * 0.85f
+                        val maxConsumable = (1f - current) * portraitFsTravelPx
+                        val consumed = minOf(delta, maxConsumable)
+                        val next = (current + consumed / portraitFsTravelPx).coerceIn(0f, 1f)
+                        scope.launch { portraitFsPull.snapTo(next) }
+                        return Offset(0f, available.y)
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                val current = portraitFsPull.value
+                if (current <= 0f) return Velocity.Zero
+                val shouldCommit = (current > 0.18f || available.y > 900f) && available.y > -500f
+                if (shouldCommit) {
+                    portraitFsPull.animateTo(
+                        1f,
+                        spring(dampingRatio = 0.86f, stiffness = 420f),
+                        initialVelocity = available.y / portraitFsTravelPx,
+                    )
+                    enterPortraitFullscreen()
+                    portraitFsPull.snapTo(0f)
+                } else {
+                    portraitFsPull.animateTo(
+                        0f,
+                        spring(dampingRatio = 0.86f, stiffness = 450f),
+                        initialVelocity = available.y / portraitFsTravelPx,
+                    )
+                }
+                return available
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                return Velocity.Zero
+            }
+        }
+    }
     val fold = remember { Animatable(if (AudioOnly.enabled) 1f else 0f) }
     LaunchedEffect(AudioOnly.enabled) {
         val target = if (AudioOnly.enabled) 1f else 0f
@@ -244,30 +326,37 @@ fun PlayerScreen(
         // Soft tint behind the video, fading into the page.
         Box(
             Modifier.fillMaxWidth().height(520.dp)
-                .graphicsLayer { alpha = ramp(morph.progress.value, DetailsFadeStart) }
+                .graphicsLayer { alpha = ramp(morph.progress.value, DetailsFadeStart) * (1f - portraitFsPull.value) }
                 .background(Brush.verticalGradient(listOf(c.primaryContainer.copy(alpha = 0.75f), c.surface))),
+        )
+        // Flow-style immersive backdrop fading in live under finger as you pull down toward portrait fullscreen:
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = portraitFsPull.value }
+                .background(Color.Black),
         )
         ActionMessage(state, Modifier.align(Alignment.BottomCenter).zIndex(1f).padding(bottom = bottomClearance + 8.dp))
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(top + StageTopGap))
-            // Pinned: the video stays put while the details scroll beneath it.
-            VideoStage(state, morph, fold, onCollapse, onFullscreen, interactive)
+            // Pinned: the video stays put while the details scroll beneath it (and tracks portrait fullscreen pull).
+            VideoStage(state, morph, fold, onCollapse, onFullscreen, interactive, portraitFsOffset = { portraitFsPull.value * portraitFsTravelPx })
             // While collapsing the details are invisible anyway; leaving them out keeps them
             // from catching touches meant for the mini-player.
             if (!showDetails) Spacer(Modifier.weight(1f)) else
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
-                    .nestedScroll(morph.nestedScroll)
+                    .nestedScroll(detailsPull)
                     .graphicsLayer {
                         // The details ride along under the video's bottom edge (so they never
-                        // overlap it mid-morph) and only fade in for the last stretch.
+                        // overlap it mid-morph) and only fade in for the last stretch; live-slides with portrait pull.
                         val p = morph.progress.value
-                        // Under the comments panel they stay hidden while the player moves, so
-                        // the two never show through each other as the panel fades out.
-                        alpha = if (p < 1f && state.sheet.isPanel) 0f else ramp(p, DetailsFadeStart)
+                        val fsFactor = (1f - portraitFsPull.value * 1.5f).coerceIn(0f, 1f)
+                        alpha = if (p < 1f && state.sheet.isPanel) 0f else ramp(p, DetailsFadeStart) * fsFactor
                         val g = morph.geometry
-                        translationY = if (g != null) lerpF(g.miniThumb.bottom - g.stage.bottom, 0f, p) else 0f
+                        val morphY = if (g != null) lerpF(g.miniThumb.bottom - g.stage.bottom, 0f, p) else 0f
+                        translationY = morphY + portraitFsPull.value * portraitFsTravelPx
                     },
                 contentPadding = PaddingValues(bottom = bottomClearance + 16.dp),
             ) {
@@ -308,7 +397,9 @@ fun PlayerScreen(
                         }
                         Spacer(Modifier.height(14.dp))
                         PlayerActions(state)
-                        CommentsCard(state.comments, onOpen = { state.sheet = PlayerSheet.Comments })
+                        if (details?.quality != "Downloaded") {
+                            CommentsCard(state.comments, onOpen = { state.sheet = PlayerSheet.Comments })
+                        }
                         QueueCard(state, onOpen = { state.sheet = PlayerSheet.Queue })
                     }
                 }
@@ -367,6 +458,7 @@ fun PlayerScreen(
                 when (state.sheet) {
                     PlayerSheet.Transcript -> TranscriptPanel(state, partialTop = panelRestTop(state), onClose = { state.sheet = null })
                     PlayerSheet.Description -> VideoDescriptionPanel(state, partialTop = panelRestTop(state), onClose = { state.sheet = null })
+                    PlayerSheet.OnTheGo -> OnTheGoPanel(state, partialTop = panelRestTop(state), onClose = { state.sheet = null })
                     else -> CommentsPanel(state.comments, partialTop = panelRestTop(state), onClose = { state.sheet = null })
                 }
             }
@@ -692,9 +784,18 @@ private fun descriptionCount(value: Long): String {
  * [FullscreenPull] or with a flick it turns to landscape; short of that it eases back.
  */
 @Composable
-private fun VideoStage(state: PlayerState, morph: PlayerMorph, fold: Animatable<Float, *>, onCollapse: () -> Unit, onFullscreen: () -> Unit, interactive: Boolean) {
+private fun VideoStage(
+    state: PlayerState,
+    morph: PlayerMorph,
+    fold: Animatable<Float, *>,
+    onCollapse: () -> Unit,
+    onFullscreen: () -> Unit,
+    interactive: Boolean,
+    portraitFsOffset: () -> Float = { 0f },
+) {
     val reduced = rememberReducedMotion()
     val scope = rememberCoroutineScope()
+    val enterFullscreen by rememberUpdatedState(onFullscreen)
     // The height follows the video; when its real shape arrives the change eases in.
     val aspect by animateFloatAsState(
         state.stageAspect,
@@ -703,10 +804,6 @@ private fun VideoStage(state: PlayerState, morph: PlayerMorph, fold: Animatable<
     )
     val pullUp = remember { Animatable(0f) }
     val pullDistance = with(LocalDensity.current) { FullscreenPull.toPx() }
-    // Each gesture's first move decides: up on the open player pulls toward fullscreen,
-    // anything else drives the morph.
-    var decided by remember { mutableStateOf(false) }
-    var pulling by remember { mutableStateOf(false) }
     // Rubber band: up to 6% bigger, ever more slowly, growing down from the top edge.
     val swell = { 1f + 0.06f * (1f - exp(-pullUp.value / (pullDistance * 1.5f))) }
     val folded = { if (PlayerControls.inBar) fold.value * ramp(morph.progress.value, 0.8f) else 0f }
@@ -722,9 +819,7 @@ private fun VideoStage(state: PlayerState, morph: PlayerMorph, fold: Animatable<
                 }
             }
         }
-        .padding(horizontal = StageSideGap)
-        .fillMaxWidth()
-        .aspectRatio(aspect)
+        .fillMaxSize()
         .graphicsLayer {
             val k = swell()
             scaleX = k
@@ -756,28 +851,84 @@ private fun VideoStage(state: PlayerState, morph: PlayerMorph, fold: Animatable<
             ambientShadowColor = Color.Black.copy(alpha = 0.25f)
             spotShadowColor = Color.Black.copy(alpha = 0.35f)
         }
-        .draggable(
-            state = rememberDraggableState { delta ->
-                if (!decided) {
-                    decided = true
-                    pulling = delta < 0f && state.expanded && !state.fullscreen && !AudioOnly.enabled && morph.progress.value >= 0.999f
-                }
-                if (pulling) scope.launch(start = CoroutineStart.UNDISPATCHED) { pullUp.snapTo((pullUp.value - delta).coerceAtLeast(0f)) }
-                else morph.dragBy(delta)
-            },
-            orientation = Orientation.Vertical,
-            onDragStopped = { velocity ->
-                val wasPulling = pulling
-                decided = false
-                pulling = false
-                if (wasPulling) {
-                    if (pullUp.value > pullDistance || velocity < -PlayerMorph.FLING_PX_PER_S) onFullscreen()
-                    if (reduced) pullUp.snapTo(0f) else pullUp.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 500f))
+
+    // Handle the stage swipe on the stationary outer bounds in the Initial pass so the
+    // TextureView/player surface cannot steal a downward drag before it reaches the mini-player morph.
+    val currentInteractive by rememberUpdatedState(interactive)
+    val stageSwipe = Modifier.pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            if (!currentInteractive) return@awaitEachGesture
+            val tracker = VelocityTracker().apply {
+                resetTracking()
+                addPosition(down.uptimeMillis, down.position)
+            }
+            var previous = down.position
+            var direction = 0 // 1 = morph down to mini player, -1 = pull up toward fullscreen
+            var pullAmount = 0f
+            var cumulativeDragY = 0f
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.count { it.pressed } > 1) break
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                val delta = change.position - previous
+                previous = change.position
+                val fromDown = change.position - down.position
+                tracker.addPosition(change.uptimeMillis, change.position)
+
+                if (direction == 0) {
+                    val slop = viewConfiguration.touchSlop
+                    when {
+                        fromDown.y > slop && fromDown.y > kotlin.math.abs(fromDown.x) * 0.5f -> {
+                            direction = 1
+                            cumulativeDragY = fromDown.y
+                            morph.dragBy(fromDown.y)
+                            change.consume()
+                        }
+                        fromDown.y < -slop && kotlin.math.abs(fromDown.y) > kotlin.math.abs(fromDown.x) * 0.5f &&
+                            state.expanded && !state.fullscreen && !AudioOnly.enabled && morph.progress.value >= 0.999f -> {
+                            direction = -1
+                            pullAmount = -fromDown.y
+                            scope.launch { pullUp.snapTo(pullAmount) }
+                            change.consume()
+                        }
+                        kotlin.math.abs(fromDown.x) > slop * 2f && kotlin.math.abs(fromDown.x) > kotlin.math.abs(fromDown.y) * 1.5f -> break
+                    }
                 } else {
-                    morph.settle(velocity, reduced)
+                    if (direction > 0) {
+                        cumulativeDragY += delta.y
+                        morph.dragBy(delta.y)
+                    } else {
+                        pullAmount = (pullAmount - delta.y).coerceAtLeast(0f)
+                        scope.launch { pullUp.snapTo(pullAmount) }
+                    }
+                    change.consume()
                 }
-            },
-        )
+                if (!change.pressed) break
+            }
+
+            val velocityY = tracker.calculateVelocity().y
+            when (direction) {
+                1 -> {
+                    // Downward swipe on video -> settle to mini-player
+                    if (velocityY < -200f) {
+                        morph.settle(-600f, reduced)
+                    } else if (velocityY > 200f || morph.progress.value < 0.92f || cumulativeDragY > 40f) {
+                        morph.settle(maxOf(velocityY, 600f), reduced)
+                    } else {
+                        morph.settle(velocityY, reduced)
+                    }
+                }
+                -1 -> {
+                    // Upward swipe on video -> enter fullscreen
+                    if (pullAmount > pullDistance || velocityY < -300f) enterFullscreen()
+                    scope.launch {
+                        if (reduced) pullUp.snapTo(0f) else pullUp.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 500f))
+                    }
+                }
+            }
+        }
+    }
     // Controls appear only once the video has nearly landed, so they never ride the morph.
     val controlsAlpha = { ramp(morph.progress.value, 0.7f) }
     // Audio only ↔ video in place (Derek, 2026-10-14): [cover] is how much of the audio stage
@@ -808,6 +959,11 @@ private fun VideoStage(state: PlayerState, morph: PlayerMorph, fold: Animatable<
     Box(
         Modifier
             .zIndex(1f)
+            .graphicsLayer { translationY = portraitFsOffset() }
+            .padding(horizontal = StageSideGap)
+            .fillMaxWidth()
+            .aspectRatio(aspect)
+            .then(stageSwipe)
             .videoEdge(
                 state, edge,
                 enabled = onVideo && interactive && !audio,
@@ -1032,6 +1188,7 @@ private fun PlayerMoreSheet(
                     Text(item.title, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
                 }
             }
+            PlayerMoreRow(Icons.Rounded.Tune, "On-the-go", "Premium listening controls & audio mode") { state.onTheGoOpen = true; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Description, "Description", "Read the video description") { state.sheet = PlayerSheet.Description; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Speed, "Playback speed", "${PlaybackSpeed.label(state.speed)}×") { state.sheet = PlayerSheet.Speed; onDismiss() }
             PlayerMoreRow(Icons.Rounded.HighQuality, "Video quality", state.details?.quality ?: "Auto") { state.sheet = PlayerSheet.Quality; onDismiss() }
