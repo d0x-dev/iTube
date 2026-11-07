@@ -267,47 +267,81 @@ fun MusicQueueSheet(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Up Next List
-            val upcoming = queue.filterIndexed { index, _ -> index != currentIndex }
-            Text(
-                text = "Up Next (${upcoming.size})",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 6.dp)
-            )
+            // Split into Upcoming (Up Next) and Previously Played
+            val playedItems = if (currentIndex > 0) queue.subList(0, currentIndex.coerceAtMost(queue.size)) else emptyList()
+            val upcomingItems = if (currentIndex >= 0 && currentIndex + 1 < queue.size) queue.subList(currentIndex + 1, queue.size) else emptyList()
 
-            if (upcoming.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 36.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(380.dp),
+                contentPadding = PaddingValues(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // ── UP NEXT SECTION ──
+                item {
                     Text(
-                        text = "No other songs in queue",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        text = "Up Next (${upcomingItems.size})",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
                     )
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(340.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    itemsIndexed(queue) { index, item ->
-                        if (index == currentIndex) return@itemsIndexed
 
+                if (upcomingItems.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "End of queue · Autoplay will pick next track",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                } else {
+                    itemsIndexed(upcomingItems) { relativeIdx, item ->
+                        val actualIdx = currentIndex + 1 + relativeIdx
                         QueueItemRow(
                             track = item,
-                            index = index + 1,
+                            index = relativeIdx + 1,
+                            isPlayed = false,
                             onClick = {
                                 MusicPlayerState.play(item, null)
                             },
                             onRemove = {
-                                MusicPlayerState.removeFromQueue(index)
+                                MusicPlayerState.removeFromQueue(actualIdx)
+                            }
+                        )
+                    }
+                }
+
+                // ── PREVIOUSLY PLAYED SECTION ──
+                if (playedItems.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Previously Played (${playedItems.size})",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)
+                        )
+                    }
+
+                    itemsIndexed(playedItems.reversed()) { revIdx, item ->
+                        val actualIdx = currentIndex - 1 - revIdx
+                        QueueItemRow(
+                            track = item,
+                            index = playedItems.size - revIdx,
+                            isPlayed = true,
+                            onClick = {
+                                MusicPlayerState.play(item, null)
+                            },
+                            onRemove = {
+                                MusicPlayerState.removeFromQueue(actualIdx)
                             }
                         )
                     }
@@ -348,6 +382,7 @@ private fun QueueModeButton(
 private fun QueueItemRow(
     track: MusicTrack,
     index: Int,
+    isPlayed: Boolean = false,
     onClick: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -366,7 +401,7 @@ private fun QueueItemRow(
             Text(
                 text = "$index",
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                color = if (isPlayed) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.width(24.dp)
             )
 
@@ -377,6 +412,7 @@ private fun QueueItemRow(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(8.dp))
+                    .then(if (isPlayed) Modifier.background(Color.Black.copy(alpha = 0.2f)) else Modifier)
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -385,14 +421,14 @@ private fun QueueItemRow(
                 Text(
                     text = track.title,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = if (isPlayed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f) else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = track.artists,
+                    text = track.artists + if (isPlayed) " • Played" else "",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isPlayed) 0.55f else 0.85f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

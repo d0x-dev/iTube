@@ -524,6 +524,64 @@ object MusicPlayerState : Player.Listener {
         MusicPlaybackService.refreshCustomLayout()
     }
 
+    fun playNext(track: MusicTrack) {
+        if (queue.isEmpty()) {
+            play(track)
+            return
+        }
+        val existingIdx = queue.indexOfFirst { it.id == track.id }
+        if (existingIdx > queueIndex) {
+            queue.removeAt(existingIdx)
+        }
+        val insertAt = (queueIndex + 1).coerceAtMost(queue.size)
+        queue.add(insertAt, track)
+        MusicPlaybackService.refreshCustomLayout()
+    }
+
+    fun playLast(track: MusicTrack) {
+        val existingIdx = queue.indexOfFirst { it.id == track.id }
+        if (existingIdx > queueIndex) {
+            queue.removeAt(existingIdx)
+        }
+        queue.add(track)
+        MusicPlaybackService.refreshCustomLayout()
+    }
+
+    fun playNext(tracks: List<MusicTrack>) {
+        if (tracks.isEmpty()) return
+        if (queue.isEmpty()) {
+            play(tracks.first(), tracks)
+            return
+        }
+        val insertAt = (queueIndex + 1).coerceAtMost(queue.size)
+        queue.addAll(insertAt, tracks)
+        MusicPlaybackService.refreshCustomLayout()
+    }
+
+    fun addToQueue(tracks: List<MusicTrack>) {
+        if (tracks.isEmpty()) return
+        if (queue.isEmpty()) {
+            play(tracks.first(), tracks)
+            return
+        }
+        queue.addAll(tracks)
+        MusicPlaybackService.refreshCustomLayout()
+    }
+
+    fun playRadio(seedTrack: MusicTrack) {
+        scope.launch {
+            play(seedTrack)
+            val radio = MusicBackend.fetchRadioQueue(seedTrack.id)
+            if (radio.isNotEmpty()) {
+                queue.clear()
+                queue.add(seedTrack)
+                queue.addAll(radio)
+                queueIndex = 0
+                MusicPlaybackService.refreshCustomLayout()
+            }
+        }
+    }
+
     fun removeFromQueue(index: Int) {
         if (index in queue.indices) {
             queue.removeAt(index)

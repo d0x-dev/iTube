@@ -124,6 +124,10 @@ fun MusicScreen(
     var isLoading by remember { mutableStateOf(true) }
     var selectedChip by remember { mutableStateOf<String?>(null) }
 
+    var trackOptionsFor by remember { mutableStateOf<MusicTrack?>(null) }
+    var albumOptionsFor by remember { mutableStateOf<MusicPlaylistRef?>(null) }
+    var artistOptionsFor by remember { mutableStateOf<MusicArtist?>(null) }
+
     fun loadData(chip: String? = null) {
         scope.launch {
             isLoading = true
@@ -275,7 +279,10 @@ fun MusicScreen(
                                             modifier = Modifier
                                                 .width(230.dp)
                                                 .fillMaxHeight()
-                                                .pressable { onOpenMusic(track, speedDialTracks) }
+                                                .pressable(
+                                                    onLongClick = { trackOptionsFor = track },
+                                                    onClick = { onOpenMusic(track, speedDialTracks) }
+                                                )
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -346,7 +353,8 @@ fun MusicScreen(
                                             columnTracks.forEach { track ->
                                                 QuickPickRow(
                                                     track = track,
-                                                    onClick = { onOpenMusic(track, currentFeed.quickPicks) }
+                                                    onClick = { onOpenMusic(track, currentFeed.quickPicks) },
+                                                    onLongClick = { trackOptionsFor = track }
                                                 )
                                             }
                                         }
@@ -372,7 +380,10 @@ fun MusicScreen(
                                         Column(
                                             modifier = Modifier
                                                 .width(96.dp)
-                                                .pressable { onArtistClick(artist) },
+                                                .pressable(
+                                                    onLongClick = { artistOptionsFor = artist },
+                                                    onClick = { onArtistClick(artist) }
+                                                ),
                                             horizontalAlignment = Alignment.CenterHorizontally
                                         ) {
                                             Box(
@@ -432,7 +443,10 @@ fun MusicScreen(
                                             .fillMaxSize()
                                             .clip(RoundedCornerShape(20.dp))
                                             .background(c.surfaceContainerHigh)
-                                            .pressable { onOpenMusic(item, dailyItems) }
+                                            .pressable(
+                                                onLongClick = { trackOptionsFor = item },
+                                                onClick = { onOpenMusic(item, dailyItems) }
+                                            )
                                     ) {
                                         AsyncImage(
                                             model = item.thumbnailUrl,
@@ -504,7 +518,8 @@ fun MusicScreen(
                             CollectionShelf(
                                 title = "From the community",
                                 items = currentFeed.communityPlaylists,
-                                onPlaylistClick = onPlaylistClick
+                                onPlaylistClick = onPlaylistClick,
+                                onPlaylistLongClick = { albumOptionsFor = it }
                             )
                         }
                     }
@@ -561,7 +576,8 @@ fun MusicScreen(
                             CollectionShelf(
                                 title = "From artists you love",
                                 items = currentFeed.fromArtistsYouLove,
-                                onPlaylistClick = onPlaylistClick
+                                onPlaylistClick = onPlaylistClick,
+                                onPlaylistLongClick = { albumOptionsFor = it }
                             )
                         }
                     }
@@ -572,7 +588,8 @@ fun MusicScreen(
                             CollectionShelf(
                                 title = "New releases",
                                 items = currentFeed.newReleases,
-                                onPlaylistClick = onPlaylistClick
+                                onPlaylistClick = onPlaylistClick,
+                                onPlaylistLongClick = { albumOptionsFor = it }
                             )
                         }
                     }
@@ -583,7 +600,8 @@ fun MusicScreen(
                             CollectionShelf(
                                 title = "Mixed for you",
                                 items = currentFeed.mixedForYou,
-                                onPlaylistClick = onPlaylistClick
+                                onPlaylistClick = onPlaylistClick,
+                                onPlaylistLongClick = { albumOptionsFor = it }
                             )
                         }
                     }
@@ -603,7 +621,10 @@ fun MusicScreen(
                                         Column(
                                             modifier = Modifier
                                                 .width(96.dp)
-                                                .pressable { onArtistClick(artist) },
+                                                .pressable(
+                                                    onLongClick = { artistOptionsFor = artist },
+                                                    onClick = { onArtistClick(artist) }
+                                                ),
                                             horizontalAlignment = Alignment.CenterHorizontally
                                         ) {
                                             Box(
@@ -707,7 +728,8 @@ fun MusicScreen(
                                                     RankedTrackRow(
                                                         rank = idx + 1,
                                                         track = track,
-                                                        onClick = { onOpenMusic(track, currentFeed.trendingSongs) }
+                                                        onClick = { onOpenMusic(track, currentFeed.trendingSongs) },
+                                                        onLongClick = { trackOptionsFor = track }
                                                     )
                                                 }
                                             }
@@ -770,12 +792,42 @@ fun MusicScreen(
                                 items = currentFeed.moreFrom,
                                 onTrackClick = { track ->
                                     onOpenMusic(track, currentFeed.moreFrom)
+                                },
+                                onTrackLongClick = { track ->
+                                    trackOptionsFor = track
                                 }
                             )
                         }
                     }
                 }
             }
+        }
+
+        // ── iMusic Long-Press Context Sheets ──
+        trackOptionsFor?.let { track ->
+            MusicTrackOptionsSheet(
+                track = track,
+                onDismiss = { trackOptionsFor = null },
+                onGoToArtist = { artistId ->
+                    onArtistClick(MusicArtist(id = artistId, name = track.artists))
+                }
+            )
+        }
+
+        albumOptionsFor?.let { album ->
+            MusicAlbumOptionsSheet(
+                playlist = album,
+                onDismiss = { albumOptionsFor = null },
+                onViewAlbum = { onPlaylistClick(album) }
+            )
+        }
+
+        artistOptionsFor?.let { artist ->
+            MusicArtistOptionsSheet(
+                artist = artist,
+                onDismiss = { artistOptionsFor = null },
+                onViewArtist = { onArtistClick(artist) }
+            )
         }
     }
 }
@@ -837,6 +889,7 @@ private fun CollectionShelf(
     title: String,
     items: List<MusicPlaylistRef>,
     onPlaylistClick: (MusicPlaylistRef) -> Unit,
+    onPlaylistLongClick: ((MusicPlaylistRef) -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         MusicShelfTitle(title = title)
@@ -850,7 +903,10 @@ private fun CollectionShelf(
                     modifier = Modifier
                         .width(140.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .pressable { onPlaylistClick(pl) }
+                        .pressable(
+                            onLongClick = { onPlaylistLongClick?.invoke(pl) },
+                            onClick = { onPlaylistClick(pl) }
+                        )
                 ) {
                     Box(
                         modifier = Modifier
@@ -897,6 +953,7 @@ private fun TrackCollectionShelf(
     title: String,
     items: List<MusicTrack>,
     onTrackClick: (MusicTrack) -> Unit,
+    onTrackLongClick: ((MusicTrack) -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         MusicShelfTitle(title = title)
@@ -908,7 +965,8 @@ private fun TrackCollectionShelf(
             itemsIndexed(items, key = { idx, track -> "trk_${title}_${track.id}_$idx" }) { _, track ->
                 TrackCard(
                     track = track,
-                    onClick = { onTrackClick(track) }
+                    onClick = { onTrackClick(track) },
+                    onLongClick = { onTrackLongClick?.invoke(track) }
                 )
             }
         }
@@ -919,13 +977,14 @@ private fun TrackCollectionShelf(
 private fun TrackCard(
     track: MusicTrack,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
             .width(136.dp)
             .clip(RoundedCornerShape(14.dp))
-            .pressable(onClick = onClick)
+            .pressable(onLongClick = onLongClick, onClick = onClick)
     ) {
         Box(
             modifier = Modifier
@@ -964,12 +1023,13 @@ private fun TrackCard(
 private fun QuickPickRow(
     track: MusicTrack,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = c.surfaceContainerHigh.copy(alpha = 0.7f),
-        modifier = Modifier.fillMaxWidth().pressable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth().pressable(onLongClick = onLongClick, onClick = onClick)
     ) {
         Row(
             modifier = Modifier
@@ -1019,12 +1079,13 @@ private fun RankedTrackRow(
     rank: Int,
     track: MusicTrack,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = c.surfaceContainerHigh.copy(alpha = 0.7f),
-        modifier = Modifier.fillMaxWidth().pressable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth().pressable(onLongClick = onLongClick, onClick = onClick)
     ) {
         Row(
             modifier = Modifier

@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
@@ -210,6 +211,34 @@ object MusicCacheManager {
             val item = cachedTracks[idx]
             item.lastPlayedMs = System.currentTimeMillis()
             persistIndex()
+        }
+    }
+
+    /**
+     * Starts live background caching while a song is playing.
+     * Streams the audio into a temporary file, and commits upon completion with all metadata.
+     */
+    fun cacheTrackOnDemand(track: MusicTrack, onComplete: ((Boolean) -> Unit)? = null) {
+        if (isTrackCached(track.id)) {
+            onComplete?.invoke(true)
+            return
+        }
+        scope.launch {
+            val url = MusicBackend.resolveAudioStreamUrl(track.id)
+            if (url.isNullOrBlank()) {
+                withContext(Dispatchers.Main) { onComplete?.invoke(false) }
+                return@launch
+            }
+            startLiveCaching(track, url)
+            var success = false
+            for (i in 0 until 40) {
+                kotlinx.coroutines.delay(500)
+                if (isTrackCached(track.id)) {
+                    success = true
+                    break
+                }
+            }
+            withContext(Dispatchers.Main) { onComplete?.invoke(success) }
         }
     }
 

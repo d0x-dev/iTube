@@ -754,8 +754,56 @@ object InnerTube {
     /** Every short a response links to (Home's Shorts shelf, search results), in order. */
     private fun reelIds(root: JSONObject): List<String> {
         val ids = LinkedHashSet<String>()
-        root.walk { key, obj -> if (key == "reelWatchEndpoint") obj.optString("videoId").takeIf { it.length == 11 }?.let(ids::add) }
+        val entries = root.optJSONArray("entries")
+        if (entries != null) {
+            for (i in 0 until entries.length()) {
+                val entry = entries.optJSONObject(i) ?: continue
+                val reel = entry.optJSONObject("command")?.optJSONObject("reelWatchEndpoint") ?: continue
+                val id = reel.optString("videoId").takeIf { it.length == 11 } ?: continue
+                if (!isReelAd(entry, reel)) ids.add(id)
+            }
+        } else {
+            root.walk { key, obj ->
+                if (key == "reelWatchEndpoint") {
+                    val id = obj.optString("videoId").takeIf { it.length == 11 }
+                    if (id != null && !obj.optBoolean("isAd", false)) {
+                        ids.add(id)
+                    }
+                }
+            }
+        }
         return ids.toList()
+    }
+
+    /** Checks whether an entry in a Shorts feed is a sponsored ad or promo short. */
+    internal fun isReelAd(entry: JSONObject, reel: JSONObject): Boolean {
+        if (entry.has("adPlacement") || entry.has("adSlotRenderer") ||
+            entry.has("reelAdRenderer") || entry.has("inStreamAd") ||
+            entry.has("adLayout") || entry.has("adPlaybackContext") ||
+            entry.has("compactPromotedItemRenderer") || entry.has("promotedSparklesWebRenderer") ||
+            entry.has("adPlayerOverlayRenderer")) {
+            return true
+        }
+        if (reel.optBoolean("isAd", false)) return true
+        if (reel.has("adPlacement") || reel.has("adSlotRenderer")) return true
+
+        val overlay = reel.optJSONObject("overlay")?.optJSONObject("reelPlayerOverlayRenderer")
+        if (overlay != null) {
+            val style = overlay.optString("style")
+            if (style.contains("AD", ignoreCase = true) || style.contains("SPONSOR", ignoreCase = true)) return true
+            if (overlay.has("adBadge") || overlay.has("sponsoredBadge") || overlay.has("adInfoRenderer") ||
+                overlay.has("adHeaderRenderer") || overlay.has("adLayout")) return true
+        }
+
+        val raw = entry.toString()
+        if (raw.contains("\"adSlotRenderer\"") || raw.contains("\"reelAdRenderer\"") ||
+            raw.contains("\"adPlacement\"") || raw.contains("\"isAd\":true") ||
+            raw.contains("REEL_PLAYER_OVERLAY_STYLE_AD") || raw.contains("REEL_PLAYER_OVERLAY_STYLE_SPONSORED") ||
+            raw.contains("BADGE_STYLE_TYPE_AD") || raw.contains("\"sponsoredBadge\"")) {
+            return true
+        }
+
+        return false
     }
 
     /**
@@ -777,8 +825,13 @@ object InnerTube {
         val videos = LinkedHashMap<String, VideoItem>()
         val entries = root.optJSONArray("entries")
         for (i in 0 until (entries?.length() ?: 0)) {
-            val reel = entries?.optJSONObject(i)?.optJSONObject("command")?.optJSONObject("reelWatchEndpoint") ?: continue
+            val entry = entries?.optJSONObject(i) ?: continue
+            val reel = entry.optJSONObject("command")?.optJSONObject("reelWatchEndpoint") ?: continue
             val id = reel.optString("videoId").takeIf { it.length == 11 } ?: continue
+            if (isReelAd(entry, reel)) {
+                Log.i("AirStream", "shorts: blocked ad reel $id")
+                continue
+            }
             val frame = reel.optJSONObject("thumbnail")?.collectStrings("url")?.firstOrNull()
             videos.putIfAbsent(id, shortItem(id, frame))
         }

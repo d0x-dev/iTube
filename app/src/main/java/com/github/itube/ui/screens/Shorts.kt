@@ -58,6 +58,7 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import com.github.itube.SponsorBlock
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
@@ -284,6 +285,7 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
     private var bankJob: Job? = null
     private var bankingId: String? = null
     private val bankFailed = HashSet<String>()
+    private val sponsorBlockFetched = HashSet<String>()
     /** The app's own video is waiting on the network (set by the shell); the bank holds off then. */
     var mainBusy: () -> Boolean = { false }
 
@@ -726,6 +728,33 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
         progress = if (now != null && duration > 0) (now.exo.currentPosition.toFloat() / duration).coerceIn(0f, 1f) else 0f
         accountFor(curId)
         if (playing) joinHistory(curId)
+
+        // ── SponsorBlock Auto-Skip for Shorts ──
+        if (now != null && now.prepared && SponsorBlock.enabled) {
+            val segments = SponsorBlock.forUi[curId]
+            if (segments != null) {
+                val pos = now.exo.currentPosition
+                val autoSeg = segments.firstOrNull {
+                    it.action == SponsorBlock.Action.Auto && pos in it.startMs until (it.endMs - 200).coerceAtLeast(it.startMs)
+                }
+                if (autoSeg != null) {
+                    val durationMs = now.exo.duration
+                    if (durationMs > 0 && (autoSeg.endMs - autoSeg.startMs) >= durationMs * 0.85f) {
+                        Log.i(TAG, "SponsorBlock: skipping entire sponsored Short $curId")
+                        if (index < items.lastIndex) index++
+                    } else {
+                        Log.i(TAG, "SponsorBlock: skipping ${autoSeg.category.key} in Short $curId to ${autoSeg.endMs}ms")
+                        now.exo.seekTo(autoSeg.endMs)
+                    }
+                }
+            } else if (!sponsorBlockFetched.contains(curId)) {
+                sponsorBlockFetched.add(curId)
+                scope.launch(Dispatchers.IO) {
+                    val segs = SponsorBlock.fetch(curId)
+                    SponsorBlock.forUi[curId] = segs
+                }
+            }
+        }
     }
 
     /**

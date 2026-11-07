@@ -1,5 +1,9 @@
 package com.github.itube
 
+import com.github.itube.ui.screens.MusicTrackOptionsSheet
+import com.github.itube.ui.screens.MusicArtistOptionsSheet
+import com.github.itube.ui.screens.MusicAlbumOptionsSheet
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
@@ -1499,6 +1503,9 @@ fun SearchScreen(
     }
     var focused by remember { mutableStateOf(false) }
     var filtersOpen by remember { mutableStateOf(false) }
+    var trackOptionsFor by remember { mutableStateOf<MusicTrack?>(null) }
+    var artistOptionsFor by remember { mutableStateOf<MusicArtist?>(null) }
+    var albumOptionsFor by remember { mutableStateOf<MusicPlaylistRef?>(null) }
     // The keyboard closed by Back or its own button leaves the field focused; drop the focus
     // with it so the history gives way to the results again.
     val imeVisible = WindowInsets.isImeVisible
@@ -1786,6 +1793,9 @@ fun SearchScreen(
                                                 track = track,
                                                 onClick = {
                                                     MusicPlayerState.play(track, null)
+                                                },
+                                                onLongClick = {
+                                                    trackOptionsFor = track
                                                 }
                                             )
                                         }
@@ -1798,7 +1808,11 @@ fun SearchScreen(
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .clickable { onMusicArtistClick(artist) }
+                                                    .pressable(
+                                                        pressedScale = 0.98f,
+                                                        onLongClick = { artistOptionsFor = artist },
+                                                        onClick = { onMusicArtistClick(artist) }
+                                                    )
                                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                             ) {
@@ -1844,7 +1858,11 @@ fun SearchScreen(
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .clickable { onMusicPlaylistClick(item) }
+                                                    .pressable(
+                                                        pressedScale = 0.98f,
+                                                        onLongClick = { albumOptionsFor = item },
+                                                        onClick = { onMusicPlaylistClick(item) }
+                                                    )
                                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                             ) {
@@ -1891,6 +1909,43 @@ fun SearchScreen(
             }
         }
     }
+    trackOptionsFor?.let { track ->
+        MusicTrackOptionsSheet(
+            track = track,
+            onDismiss = { trackOptionsFor = null },
+            onGoToArtist = { artistName ->
+                trackOptionsFor = null
+                onMusicArtistClick(MusicArtist(id = artistName, name = artistName))
+            }
+        )
+    }
+
+    artistOptionsFor?.let { artist ->
+        MusicArtistOptionsSheet(
+            artist = artist,
+            onDismiss = { artistOptionsFor = null },
+            onViewArtist = {
+                artistOptionsFor = null
+                onMusicArtistClick(artist)
+            }
+        )
+    }
+
+    albumOptionsFor?.let { album ->
+        MusicAlbumOptionsSheet(
+            playlist = album,
+            onDismiss = { albumOptionsFor = null },
+            onViewAlbum = {
+                albumOptionsFor = null
+                onMusicPlaylistClick(album)
+            },
+            onGoToArtist = { artistName ->
+                albumOptionsFor = null
+                onMusicArtistClick(MusicArtist(id = artistName, name = artistName))
+            }
+        )
+    }
+
     if (filtersOpen) SearchFiltersSheet(
         selected = state.filter,
         onSelected = { filter ->
@@ -2167,6 +2222,7 @@ private fun SearchSuggestionsList(suggestions: List<String>, contentPadding: Pad
 fun MusicSearchTrackRow(
     track: MusicTrack,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val isCurrent = MusicPlayerState.currentTrack?.id == track.id
@@ -2176,7 +2232,11 @@ fun MusicSearchTrackRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .pressable(
+                pressedScale = 0.98f,
+                onLongClick = onLongClick,
+                onClick = onClick,
+            )
             .padding(horizontal = 16.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

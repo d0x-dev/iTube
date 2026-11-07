@@ -114,6 +114,9 @@ fun iMusicArtistScreen(
     var isLoading by remember(channelId) { mutableStateOf(true) }
     var isSubscribed by remember { mutableStateOf(false) }
     var isBioExpanded by remember { mutableStateOf(false) }
+    var trackOptionsFor by remember { mutableStateOf<MusicTrack?>(null) }
+    var albumOptionsFor by remember { mutableStateOf<MusicPlaylistRef?>(null) }
+    var artistOptionsFor by remember { mutableStateOf<MusicArtist?>(null) }
 
     LaunchedEffect(channelId) {
         withContext(Dispatchers.IO) {
@@ -366,7 +369,10 @@ fun iMusicArtistScreen(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isPlayingThis) c.primaryContainer.copy(alpha = 0.35f) else Color.Transparent)
-                            .pressable { onTrackClick(track, topTracks) }
+                            .pressable(
+                                onLongClick = { trackOptionsFor = track },
+                                onClick = { onTrackClick(track, topTracks) }
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -426,7 +432,7 @@ fun iMusicArtistScreen(
 
                         // Options
                         IconButton(
-                            onClick = { /* Menu */ },
+                            onClick = { trackOptionsFor = track },
                             modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
@@ -453,7 +459,11 @@ fun iMusicArtistScreen(
                         modifier = Modifier.padding(bottom = 12.dp),
                     ) {
                         itemsIndexed(singles, key = { idx, item -> "singles_${item.id}_$idx" }) { _, item ->
-                            PlaylistCard(item = item, onClick = { onAlbumClick(item) })
+                            PlaylistCard(
+                                item = item,
+                                onClick = { onAlbumClick(item) },
+                                onLongClick = { albumOptionsFor = item }
+                            )
                         }
                     }
                 }
@@ -472,7 +482,11 @@ fun iMusicArtistScreen(
                         modifier = Modifier.padding(bottom = 12.dp),
                     ) {
                         itemsIndexed(albums, key = { idx, item -> "albums_${item.id}_$idx" }) { _, item ->
-                            PlaylistCard(item = item, onClick = { onAlbumClick(item) })
+                            PlaylistCard(
+                                item = item,
+                                onClick = { onAlbumClick(item) },
+                                onLongClick = { albumOptionsFor = item }
+                            )
                         }
                     }
                 }
@@ -495,7 +509,10 @@ fun iMusicArtistScreen(
                                 modifier = Modifier
                                     .width(180.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .pressable { onTrackClick(video, videos) },
+                                    .pressable(
+                                        onLongClick = { trackOptionsFor = video },
+                                        onClick = { onTrackClick(video, videos) }
+                                    ),
                             ) {
                                 Box(
                                     modifier = Modifier
@@ -539,7 +556,11 @@ fun iMusicArtistScreen(
                         modifier = Modifier.padding(bottom = 12.dp),
                     ) {
                         itemsIndexed(featured, key = { idx, item -> "featured_${item.id}_$idx" }) { _, item ->
-                            PlaylistCard(item = item, onClick = { onAlbumClick(item) })
+                            PlaylistCard(
+                                item = item,
+                                onClick = { onAlbumClick(item) },
+                                onLongClick = { albumOptionsFor = item }
+                            )
                         }
                     }
                 }
@@ -561,7 +582,16 @@ fun iMusicArtistScreen(
                             Column(
                                 modifier = Modifier
                                     .width(96.dp)
-                                    .pressable { onArtistClick(relatedArtist.id) },
+                                    .pressable(
+                                        onLongClick = {
+                                            artistOptionsFor = MusicArtist(
+                                                id = relatedArtist.id,
+                                                name = relatedArtist.name,
+                                                thumbnailUrl = relatedArtist.thumbnailUrl
+                                            )
+                                        },
+                                        onClick = { onArtistClick(relatedArtist.id) }
+                                    ),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 Box(
@@ -659,7 +689,57 @@ fun iMusicArtistScreen(
                         tint = if (topBarAlpha < 0.5f) Color.White else c.onBackground,
                     )
                 }
+                IconButton(
+                    onClick = {
+                        artistOptionsFor = MusicArtist(id = channelId, name = displayName, thumbnailUrl = heroImageUrl)
+                    },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            if (topBarAlpha < 0.5f) Color.Black.copy(alpha = 0.35f) else Color.Transparent,
+                            CircleShape
+                        ),
+                ) {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        contentDescription = "Options",
+                        tint = if (topBarAlpha < 0.5f) Color.White else c.onBackground,
+                    )
+                }
             }
+        }
+
+        // ── iMusic Track, Album & Artist Options Sheets ──
+        trackOptionsFor?.let { track ->
+            MusicTrackOptionsSheet(
+                track = track,
+                onDismiss = { trackOptionsFor = null },
+                onGoToArtist = { artistId ->
+                    onArtistClick(artistId)
+                }
+            )
+        }
+
+        albumOptionsFor?.let { album ->
+            MusicAlbumOptionsSheet(
+                playlist = album,
+                onDismiss = { albumOptionsFor = null },
+                onGoToArtist = { artistId ->
+                    onArtistClick(artistId)
+                }
+            )
+        }
+
+        artistOptionsFor?.let { artistItem ->
+            MusicArtistOptionsSheet(
+                artist = artistItem,
+                onDismiss = { artistOptionsFor = null },
+                onViewArtist = {
+                    if (artistItem.id != channelId) {
+                        onArtistClick(artistItem.id)
+                    }
+                }
+            )
         }
     }
 }
@@ -682,13 +762,14 @@ private fun SectionHeader(title: String) {
 private fun PlaylistCard(
     item: MusicPlaylistRef,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
             .width(136.dp)
             .clip(RoundedCornerShape(12.dp))
-            .pressable(onClick = onClick),
+            .pressable(onLongClick = onLongClick, onClick = onClick),
     ) {
         Box(
             modifier = Modifier

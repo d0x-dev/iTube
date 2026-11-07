@@ -74,6 +74,7 @@ import com.github.itube.MusicPlayerState
 import com.github.itube.MusicTrack
 import com.github.itube.PlaylistDetails
 import com.github.itube.RoundedHeavy
+import com.github.itube.MusicPlaylistRef
 import com.github.itube.pressable
 import com.github.itube.ui.components.AnimatedEqualizer
 import com.github.itube.ui.components.MaterialLoader
@@ -104,6 +105,8 @@ fun iMusicPlaylistScreen(
     var details by remember(playlistId) { mutableStateOf<PlaylistDetails?>(null) }
     var isLoading by remember(playlistId) { mutableStateOf(true) }
     var isBookmarked by remember { mutableStateOf(false) }
+    var trackOptionsFor by remember { mutableStateOf<MusicTrack?>(null) }
+    var albumOptionsFor by remember { mutableStateOf<MusicPlaylistRef?>(null) }
 
     LaunchedEffect(playlistId) {
         withContext(Dispatchers.IO) {
@@ -166,6 +169,16 @@ fun iMusicPlaylistScreen(
                         context.startActivity(Intent.createChooser(intent, "Share"))
                     }) {
                         Icon(Icons.Rounded.Share, contentDescription = "Share", tint = c.onBackground)
+                    }
+                    IconButton(onClick = {
+                        albumOptionsFor = MusicPlaylistRef(
+                            id = playlistId,
+                            title = displayTitle,
+                            author = displayAuthor,
+                            thumbnailUrl = displayThumb
+                        )
+                    }) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "Options", tint = c.onBackground)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.background),
@@ -329,7 +342,10 @@ fun iMusicPlaylistScreen(
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isPlayingThis) c.primaryContainer.copy(alpha = 0.35f) else Color.Transparent)
-                            .pressable { onTrackClick(track, tracks) }
+                            .pressable(
+                                onLongClick = { trackOptionsFor = track },
+                                onClick = { onTrackClick(track, tracks) }
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -389,7 +405,7 @@ fun iMusicPlaylistScreen(
 
                         // Options
                         IconButton(
-                            onClick = { /* More actions */ },
+                            onClick = { trackOptionsFor = track },
                             modifier = Modifier.size(36.dp),
                         ) {
                             Icon(
@@ -402,6 +418,27 @@ fun iMusicPlaylistScreen(
                     }
                 }
             }
+        }
+
+        // ── Track & Album Options Sheets ──
+        trackOptionsFor?.let { track ->
+            MusicTrackOptionsSheet(
+                track = track,
+                onDismiss = { trackOptionsFor = null },
+                onGoToArtist = { artistId ->
+                    onArtistClick(artistId)
+                }
+            )
+        }
+
+        albumOptionsFor?.let { album ->
+            MusicAlbumOptionsSheet(
+                playlist = album,
+                onDismiss = { albumOptionsFor = null },
+                onGoToArtist = { artistId ->
+                    onArtistClick(artistId)
+                }
+            )
         }
     }
 }
