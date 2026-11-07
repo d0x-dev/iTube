@@ -133,7 +133,6 @@ fun iMusicArtistScreen(
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val artistShape = flowArtistShape()
 
-    // TopBar alpha calculation
     val topBarAlpha by remember {
         derivedStateOf {
             if (scrollState.firstVisibleItemIndex > 0) 1f
@@ -183,7 +182,7 @@ fun iMusicArtistScreen(
                                 .background(
                                     Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.Black.copy(alpha = 0.45f),
+                                            Color.Black.copy(alpha = 0.40f),
                                             Color.Transparent
                                         )
                                     )
