@@ -88,6 +88,15 @@ object MusicPlayerState : Player.Listener {
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
         private set
 
+    var playbackSpeed by mutableFloatStateOf(1f)
+        private set
+
+    var holdingFast by mutableStateOf(false)
+        private set
+
+    private var preHoldSpeed: Float = 1f
+    private var preHoldPlaying: Boolean = false
+
     // Sheet / Dialog states
     var expanded by mutableStateOf(false)
     var queueOpen by mutableStateOf(false)
@@ -281,6 +290,7 @@ object MusicPlayerState : Player.Listener {
                             .build()
                         player.setMediaItem(mediaItem)
                         player.prepare()
+                        player.setPlaybackSpeed(if (holdingFast) 2f else playbackSpeed)
                         player.playWhenReady = true
                         player.play()
                         resolvingStream = false
@@ -333,6 +343,7 @@ object MusicPlayerState : Player.Listener {
                         .build()
                     player.setMediaItem(mediaItem)
                     player.prepare()
+                    player.setPlaybackSpeed(if (holdingFast) 2f else playbackSpeed)
                     player.playWhenReady = true
                     player.play()
                     resolvingStream = false
@@ -434,6 +445,7 @@ object MusicPlayerState : Player.Listener {
         queue.clear()
         queueIndex = 0
         isPlaying = false
+        holdingFast = false
         isLoading = false
         positionMs = 0L
         durationMs = 0L
@@ -517,6 +529,37 @@ object MusicPlayerState : Player.Listener {
         }
         exoPlayer?.let { it.repeatMode = repeatMode }
             ?: MusicPlaybackService.refreshCustomLayout()
+    }
+
+    fun applyPlaybackSpeed(speed: Float) {
+        playbackSpeed = speed
+        if (!holdingFast) {
+            exoPlayer?.setPlaybackSpeed(speed)
+        }
+    }
+
+    fun startFastHold(): Boolean {
+        val player = exoPlayer ?: return false
+        if (holdingFast || player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) return false
+        preHoldSpeed = playbackSpeed
+        preHoldPlaying = player.isPlaying || player.playWhenReady
+        holdingFast = true
+        player.setPlaybackSpeed(2f)
+        if (!player.playWhenReady) {
+            player.playWhenReady = true
+            player.play()
+        }
+        return true
+    }
+
+    fun endFastHold() {
+        if (!holdingFast) return
+        holdingFast = false
+        val player = exoPlayer ?: return
+        player.setPlaybackSpeed(preHoldSpeed)
+        if (!preHoldPlaying) {
+            player.pause()
+        }
     }
 
     fun addToQueue(track: MusicTrack) {

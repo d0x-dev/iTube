@@ -1708,7 +1708,7 @@ private fun SeekBurstPill(side: Int, seconds: Int, taps: Int, active: Boolean, f
  * pill's glass, springing in; the glyph keeps dashing forward while held. Reduced motion: fade only.
  */
 @Composable
-private fun FastHoldPill(shown: Boolean, fullscreen: Boolean, modifier: Modifier = Modifier) {
+internal fun FastHoldPill(shown: Boolean, fullscreen: Boolean, modifier: Modifier = Modifier) {
     val reduced = rememberReducedMotion()
     val alpha by animateFloatAsState(
         targetValue = if (shown) 1f else 0f,

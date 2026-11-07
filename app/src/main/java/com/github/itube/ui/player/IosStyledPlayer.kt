@@ -16,7 +16,14 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.Image
+import com.github.itube.FastHoldPill
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
@@ -201,6 +208,7 @@ fun IosStyledPlayer(
                 videoPlayer.setMediaItem(mediaItem)
                 videoPlayer.prepare()
                 videoPlayer.seekTo(MusicPlayerState.positionMs)
+                videoPlayer.setPlaybackSpeed(if (MusicPlayerState.holdingFast) 2f else MusicPlayerState.playbackSpeed)
                 if (MusicPlayerState.isPlaying) videoPlayer.play() else videoPlayer.pause()
             }
         } catch (e: Exception) {
@@ -214,6 +222,14 @@ fun IosStyledPlayer(
     LaunchedEffect(isPlaying) {
         if (isVideoMode) {
             if (isPlaying) videoPlayer.play() else videoPlayer.pause()
+        }
+    }
+
+    // Playback Speed sync (including 2x Fast Hold)
+    LaunchedEffect(isVideoMode, MusicPlayerState.holdingFast, MusicPlayerState.playbackSpeed) {
+        if (isVideoMode) {
+            val targetSpeed = if (MusicPlayerState.holdingFast) 2f else MusicPlayerState.playbackSpeed
+            videoPlayer.setPlaybackSpeed(targetSpeed)
         }
     }
 
@@ -252,6 +268,28 @@ fun IosStyledPlayer(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    try {
+                        withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                            waitForUpOrCancellation()
+                        }
+                    } catch (_: PointerEventTimeoutCancellationException) {
+                        if (MusicPlayerState.startFastHold()) {
+                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        }
+                        try {
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { it.consume() }
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            MusicPlayerState.endFastHold()
+                        }
+                    }
+                }
+            }
     ) {
         // ── 1. Full Screen High Quality Artwork / Fullscreen Video Backdrop with Lower Blur Effect ──
         if (isVideoMode && isVideoFullscreen) {
@@ -419,18 +457,18 @@ fun IosStyledPlayer(
             }
         }
 
-        // ── 2. Top Navigation Bar (Collapse Chevron, Song/Video Switch Pill, More Menu) ──
-        Row(
+        // ── 2. Top Navigation Bar (Collapse Chevron, Centered Switch Pill, More Menu) ──
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
             IconButton(
                 onClick = onCollapse,
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier
+                    .size(44.dp)
+                    .align(Alignment.CenterStart)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.KeyboardArrowDown,
@@ -440,17 +478,21 @@ fun IosStyledPlayer(
                 )
             }
 
-            // Top Song / Video Switch Pill
+            // Top Song / Video Switch Pill (Always Centered)
             MusicVideoSwitchPill(
                 isVideoMode = isVideoMode,
                 onToggle = { toVideo ->
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     isVideoMode = toVideo
                     if (!toVideo) isVideoFullscreen = false
-                }
+                },
+                modifier = Modifier.align(Alignment.Center)
             )
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (isVideoMode && isVideoFullscreen) {
                     IconButton(
                         onClick = { isVideoFullscreen = false },
@@ -478,6 +520,16 @@ fun IosStyledPlayer(
                 }
             }
         }
+
+        // ── Fast Forward 2× Pill Indicator ──
+        FastHoldPill(
+            shown = MusicPlayerState.holdingFast,
+            fullscreen = isVideoMode && isVideoFullscreen,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 58.dp)
+        )
 
         // ── 3. Bottom Controls Anchored Column ──
         Column(
@@ -905,7 +957,7 @@ private fun MusicOptionsModal(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     var showSpeedDialog by remember { mutableStateOf(false) }
-    var playbackSpeed by remember { mutableStateOf(1.0f) }
+    val currentSpeed = MusicPlayerState.playbackSpeed
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -983,13 +1035,13 @@ private fun MusicOptionsModal(
 
                 val speedOptions = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
                 speedOptions.forEach { s ->
-                    val isSelected = playbackSpeed == s
+                    val isSelected = currentSpeed == s
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .clickable {
-                                playbackSpeed = s
+                                MusicPlayerState.applyPlaybackSpeed(s)
                                 showSpeedDialog = false
                             }
                             .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -1013,7 +1065,7 @@ private fun MusicOptionsModal(
                 MusicOptionItem(
                     icon = Icons.Rounded.Speed,
                     title = "Playback Speed",
-                    subtitle = if (playbackSpeed == 1.0f) "Normal" else "${playbackSpeed}x",
+                    subtitle = if (currentSpeed == 1.0f) "Normal" else "${currentSpeed}x",
                     onClick = { showSpeedDialog = true }
                 )
 
@@ -1181,19 +1233,26 @@ fun MusicVideoSwitchPill(
     onToggle: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val pillWidth = 104.dp
+    val pillHeight = 40.dp
+    val thumbWidth = 48.dp
+    val thumbHeight = 32.dp
+    val padding = 4.dp
+    val maxOffset = pillWidth - thumbWidth - padding
+
     val thumbOffset by animateDpAsState(
-        targetValue = if (isVideoMode) 48.dp else 4.dp,
+        targetValue = if (isVideoMode) maxOffset else padding,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.82f),
         label = "pillThumb"
     )
 
     Box(
         modifier = modifier
-            .width(96.dp)
-            .height(40.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .width(pillWidth)
+            .height(pillHeight)
+            .clip(RoundedCornerShape(pillHeight / 2))
             .background(Color.Black.copy(alpha = 0.52f))
-            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(pillHeight / 2))
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null
@@ -1206,9 +1265,9 @@ fun MusicVideoSwitchPill(
         Box(
             modifier = Modifier
                 .padding(start = thumbOffset)
-                .size(width = 44.dp, height = 32.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color.White.copy(alpha = 0.24f)),
+                .size(width = thumbWidth, height = thumbHeight)
+                .clip(RoundedCornerShape(thumbHeight / 2))
+                .background(Color.White.copy(alpha = 0.22f)),
         )
 
         // Icons Row
@@ -1233,7 +1292,7 @@ fun MusicVideoSwitchPill(
                     imageVector = Icons.Rounded.Headphones,
                     contentDescription = "Song Mode",
                     tint = if (!isVideoMode) Color.White else Color.White.copy(alpha = 0.45f),
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -1254,7 +1313,7 @@ fun MusicVideoSwitchPill(
                     imageVector = Icons.Rounded.SmartDisplay,
                     contentDescription = "Video Mode",
                     tint = if (isVideoMode) Color.White else Color.White.copy(alpha = 0.45f),
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }

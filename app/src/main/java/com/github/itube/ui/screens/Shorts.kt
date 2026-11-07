@@ -5,8 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.os.SystemClock
 import android.util.Log
+import android.view.HapticFeedbackConstants
 import android.view.Surface
 import android.view.TextureView
+import android.view.View
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -21,6 +23,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -355,6 +359,10 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
         private set
     var playbackSpeed by mutableFloatStateOf(1f)
         private set
+    var holdingFast by mutableStateOf(false)
+        private set
+    private var preHoldSpeed: Float = 1f
+    private var preHoldPlaying: Boolean = false
     var selectedQuality by mutableStateOf<Int?>(null)
         private set
     var selectedAudioTrackId by mutableStateOf<String?>(null)
@@ -540,6 +548,7 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
 
     /** The pager settled on [page]. The short left behind rewinds, ready to play again. */
     fun select(page: Int) {
+        if (holdingFast) endFastHold()
         if (page == index) return
         assigned[index]?.exo?.let { it.playWhenReady = false; it.seekTo(0) }
         index = page
@@ -957,7 +966,28 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
     /** Applies the selected speed to the current Short and the preloaded pages. */
     fun applyPlaybackSpeed(speed: Float) {
         playbackSpeed = speed
-        pool.forEach { it.exo.playbackParameters = PlaybackParameters(speed) }
+        if (!holdingFast) {
+            pool.forEach { it.exo.playbackParameters = PlaybackParameters(speed) }
+        }
+    }
+
+    fun startFastHold(): Boolean {
+        val player = assigned[index]?.exo ?: return false
+        if (holdingFast) return false
+        preHoldSpeed = playbackSpeed
+        preHoldPlaying = player.playWhenReady
+        holdingFast = true
+        player.playbackParameters = PlaybackParameters(2f)
+        if (!player.playWhenReady) player.play()
+        return true
+    }
+
+    fun endFastHold() {
+        if (!holdingFast) return
+        holdingFast = false
+        val player = assigned[index]?.exo ?: return
+        player.playbackParameters = PlaybackParameters(preHoldSpeed)
+        if (!preHoldPlaying) player.pause()
     }
 
     data class AudioTrackChoice(
@@ -2285,12 +2315,13 @@ private fun ShortPage(shorts: ShortsState, page: Int, overlayBottom: Dp) {
     val failure = shorts.failed[item.id]
     val aspect = shorts.aspects[item.id] ?: details?.aspect ?: (9f / 16f)
     val onScreen = shorts.index == page
+    val view = LocalView.current
     DisposableEffect(page) { onDispose { shorts.forgetPage(page) } }
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInputTap(page) { if (shorts.index == page) shorts.togglePause() },
+            .pointerInputTap(page, shorts, view) { if (shorts.index == page) shorts.togglePause() },
     ) {
         Box(Modifier.fillMaxSize().clipToBounds()) {
             // Vertical shorts fill the screen (a little cropped at the sides); wider ones fit its width.
@@ -2336,23 +2367,52 @@ private fun ShortPage(shorts: ShortsState, page: Int, overlayBottom: Dp) {
             Icons.Rounded.PlayArrow, contentDescription = null, tint = Ink,
             modifier = Modifier.align(Alignment.Center).size(72.dp).graphicsLayer { alpha = pausedAlpha * 0.9f },
         )
+
+        if (onScreen) {
+            FastHoldPill(
+                shown = shorts.holdingFast,
+                fullscreen = true,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 24.dp)
+            )
+        }
     }
 }
 
 /**
- * A tap that leaves the touch to the pager: nothing is consumed (detectTapGestures takes the
- * down, and a quick flick then came out as a tap that paused instead of a swipe), and a touch
- * that travels past touch slop is no tap.
+ * A tap that leaves the touch to the pager: nothing is consumed on down.
+ * If held past [longPressTimeoutMillis], engages 2× playback speed until released.
+ * If released within [longPressTimeoutMillis] and within touch slop, toggles pause.
  */
-private fun Modifier.pointerInputTap(key: Any, onTap: () -> Unit) =
+private fun Modifier.pointerInputTap(key: Any, shorts: ShortsState, view: View, onTap: () -> Unit) =
     this.then(
         Modifier.pointerInput(key) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
-                val up = waitForUpOrCancellation() ?: return@awaitEachGesture
-                if ((up.position - down.position).getDistance() < viewConfiguration.touchSlop &&
-                    up.uptimeMillis - down.uptimeMillis < viewConfiguration.longPressTimeoutMillis
-                ) onTap()
+                val up = try {
+                    withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                        waitForUpOrCancellation()
+                    }
+                } catch (_: PointerEventTimeoutCancellationException) {
+                    if (shorts.startFastHold()) {
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    }
+                    try {
+                        do {
+                            val event = awaitPointerEvent()
+                            event.changes.forEach { it.consume() }
+                        } while (event.changes.any { it.pressed })
+                    } finally {
+                        shorts.endFastHold()
+                    }
+                    return@awaitEachGesture
+                } ?: return@awaitEachGesture
+
+                if ((up.position - down.position).getDistance() < viewConfiguration.touchSlop) {
+                    onTap()
+                }
             }
         },
     )
