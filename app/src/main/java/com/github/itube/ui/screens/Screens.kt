@@ -1354,7 +1354,6 @@ class SearchState(private val scope: CoroutineScope) {
         }
     }
 
-    // Submit music
     private fun submitMusic() {
         musicLoading = true
         musicError = null
@@ -1567,7 +1566,7 @@ fun SearchScreen(
                 }
             }
         }
-        // iMusic filter chips (only when Music tab selected)
+        // Interactive iMusic search filter chips
         if (state.category == SearchCategory.Music) {
             LazyRow(
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
