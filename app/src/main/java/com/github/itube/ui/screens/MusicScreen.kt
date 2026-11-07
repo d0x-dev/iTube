@@ -421,7 +421,7 @@ fun MusicScreen(
                                 HorizontalPager(
                                     state = pagerState,
                                     contentPadding = PaddingValues(horizontal = 32.dp),
-                                    pageSpacing = 16.dp // smooth slide,
+                                    pageSpacing = 16.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(210.dp)
