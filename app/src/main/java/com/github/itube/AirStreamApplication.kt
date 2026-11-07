@@ -26,6 +26,7 @@ class AirStreamApplication : Application(), ImageLoaderFactory {
         CaptionTranslator.refresh()
         SearchHistory.init(this)
         ListeningProfile.init(this)
+        MusicCacheManager.init(this)
         DownloadLibrary.init(this)
         SavedCollections.init(this)
         ResumeStore.init(this)

@@ -251,7 +251,49 @@ object MusicPlayerState : Player.Listener {
                 // Fetch lyrics in background
                 fetchLyricsForCurrentTrack(track)
 
-                // Resolve YouTube progressive audio stream
+                // 1. Check if track is already cached offline!
+                val cachedFile = MusicCacheManager.getCachedAudioFile(track.id)
+                if (cachedFile != null && cachedFile.exists() && cachedFile.length() > 0) {
+                    Log.d(TAG, "Playing track ${track.id} directly from offline audio cache: ${cachedFile.absolutePath}")
+                    MusicCacheManager.markTrackPlayed(track.id)
+                    exoPlayer?.let { player ->
+                        ensureSystemMediaSession()
+                        val mediaItem = MediaItem.Builder()
+                            .setMediaId(track.id)
+                            .setUri(Uri.fromFile(cachedFile))
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(track.title)
+                                    .setArtist(track.artists)
+                                    .setAlbumTitle(track.album)
+                                    .setArtworkUri(track.thumbnailUrl?.let(Uri::parse))
+                                    .build()
+                            )
+                            .build()
+                        player.setMediaItem(mediaItem)
+                        player.prepare()
+                        player.playWhenReady = true
+                        player.play()
+                        resolvingStream = false
+                    }
+                    if (newQueue == null) {
+                        scope.launch(Dispatchers.IO) {
+                            val radio = runCatching { MusicBackend.relatedTracks(track) }.getOrDefault(emptyList())
+                            withContext(Dispatchers.Main) {
+                                if (currentTrack?.id == track.id && queue.size <= 1 && radio.isNotEmpty()) {
+                                    queue.clear()
+                                    queue.add(track)
+                                    queue.addAll(radio)
+                                    queueIndex = 0
+                                    MusicPlaybackService.refreshCustomLayout()
+                                }
+                            }
+                        }
+                    }
+                    return@launch
+                }
+
+                // 2. Not cached: resolve progressive audio stream online
                 val streamUrl = MusicBackend.resolveAudioStreamUrl(track.id)
                 if (streamUrl.isNullOrBlank()) {
                     Log.e(TAG, "Failed to resolve stream URL for track: ${track.id}")
@@ -259,6 +301,9 @@ object MusicPlayerState : Player.Listener {
                     isLoading = false
                     return@launch
                 }
+
+                // 3. Live-cache audio in background while playing
+                MusicCacheManager.startLiveCaching(track, streamUrl)
 
                 exoPlayer?.let { player ->
                     // Normally already bound from init; retain this call for a service that the
