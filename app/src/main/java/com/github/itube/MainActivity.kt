@@ -559,10 +559,35 @@ fun AirStreamApp() {
                 )
                 Tab.Shorts -> ShortsScreen(shorts, { shortsMorph.value }, overlayBottom = stackBottom + GlassHeight + 16.dp)
                 Tab.Search -> SearchScreen(
-                    search, contentPadding, onOpen = { video -> player.setAudioOnly(false); player.open(video) },
+                    state = search,
+                    contentPadding = contentPadding,
+                    onOpen = { video ->
+                        if (video.isShortVideo) {
+                            if (tab != Tab.Shorts) shortsFrom = tab
+                            shorts.openExternal(video)
+                            tab = Tab.Shorts
+                        } else {
+                            player.setAudioOnly(false)
+                            player.open(video)
+                        }
+                    },
+                    onOpenShort = { short ->
+                        if (tab != Tab.Shorts) shortsFrom = tab
+                        shorts.openExternal(short)
+                        tab = Tab.Shorts
+                    },
                     onOpenResult = { result ->
                         when (result.kind) {
-                            SearchResultKind.Video -> result.video?.let { player.setAudioOnly(false); player.open(it) }
+                            SearchResultKind.Video -> result.video?.let { video ->
+                                if (video.isShortVideo) {
+                                    if (tab != Tab.Shorts) shortsFrom = tab
+                                    shorts.openExternal(video)
+                                    tab = Tab.Shorts
+                                } else {
+                                    player.setAudioOnly(false)
+                                    player.open(video)
+                                }
+                            }
                             SearchResultKind.Channel -> showChannel(result.url)
                             SearchResultKind.Collection -> showPublicCollection(
                                 PublicCollection(result.url, result.title, result.subtitle, result.thumbnail, result.isAlbum)

@@ -472,6 +472,10 @@ object YouTube {
         // Live and upcoming entries need HLS handling that isn't built yet.
         if (streamType != StreamType.VIDEO_STREAM) return null
         val id = runCatching { service.streamLHFactory.getId(url) }.getOrNull() ?: return null
+        val isShort = url.contains("/shorts/") ||
+                (duration in 1..60) ||
+                name.contains("#shorts", ignoreCase = true) ||
+                name.contains("#short", ignoreCase = true)
         return VideoItem(
             id = id,
             title = name,
@@ -482,6 +486,7 @@ object YouTube {
             durationSec = duration,
             views = viewCount,
             uploaded = uploadedText(textualUploadDate, uploadDate),
+            isShort = isShort,
         )
     }
 
