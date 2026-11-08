@@ -339,11 +339,11 @@ fun IosStyledPlayer(
     var areLyricsControlsVisible by remember { mutableStateOf(true) }
     var lastLyricsInteractionTime by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(isLyricsOpen) {
-        if (isLyricsOpen) {
+    LaunchedEffect(isPanelOpen) {
+        if (isPanelOpen) {
             areLyricsControlsVisible = true
             lastLyricsInteractionTime = System.currentTimeMillis()
-            if (MusicPlayerState.lyrics.isEmpty() && !MusicPlayerState.lyricsLoading) {
+            if (isLyricsOpen && MusicPlayerState.lyrics.isEmpty() && !MusicPlayerState.lyricsLoading) {
                 MusicPlayerState.refreshLyrics()
             }
         } else {
@@ -360,8 +360,8 @@ fun IosStyledPlayer(
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(isLyricsOpen, isQueueOpen, lastLyricsInteractionTime, areLyricsControlsVisible, isSeeking) {
-        if (isLyricsOpen && !isQueueOpen && areLyricsControlsVisible && !isSeeking) {
+    LaunchedEffect(isPanelOpen, lastLyricsInteractionTime, areLyricsControlsVisible, isSeeking) {
+        if (isPanelOpen && areLyricsControlsVisible && !isSeeking) {
             delay(2000L)
             areLyricsControlsVisible = false
         }
@@ -369,27 +369,25 @@ fun IosStyledPlayer(
 
     val onLyricsInteraction: () -> Unit = {
         lastLyricsInteractionTime = System.currentTimeMillis()
-        if (!areLyricsControlsVisible) {
-            areLyricsControlsVisible = true
-        }
+        areLyricsControlsVisible = !areLyricsControlsVisible
     }
 
     val density = LocalDensity.current
 
     val controlsTranslationY by animateFloatAsState(
-        targetValue = if (!isLyricsOpen || isQueueOpen || areLyricsControlsVisible) 0f else with(density) { 340.dp.toPx() },
+        targetValue = if (!isPanelOpen || areLyricsControlsVisible) 0f else with(density) { 340.dp.toPx() },
         animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
         label = "lyricsControlsTranslationY"
     )
 
     val controlsAlpha by animateFloatAsState(
-        targetValue = if (!isLyricsOpen || isQueueOpen || areLyricsControlsVisible) 1f else 0f,
+        targetValue = if (!isPanelOpen || areLyricsControlsVisible) 1f else 0f,
         animationSpec = tween(durationMillis = 280),
         label = "lyricsControlsAlpha"
     )
 
     val contentBottomPadding by animateDpAsState(
-        targetValue = if (!areLyricsControlsVisible && isLyricsOpen && !isQueueOpen) 24.dp else 295.dp,
+        targetValue = if (!areLyricsControlsVisible && isPanelOpen) 24.dp else 295.dp,
         animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
         label = "contentBottomPadding"
     )
@@ -482,17 +480,19 @@ fun IosStyledPlayer(
                     modifier = Modifier
                         .fillMaxSize()
                         .drawWithCache {
-                            val fadeStart = lerpFloat(0.48f, 1f, panelProgress)
+                            // In full music player mode, gently blend the bottom edge with the ambient background;
+                            // when morphing, keep the avatar 100% visible with no transparency masking so it zooms out smoothly.
+                            val bottomFadeAlpha = (1f - panelProgress * 6f).coerceIn(0f, 1f)
                             val gradientMask = Brush.verticalGradient(
                                 colorStops = arrayOf(
                                     0f to Color.Black,
-                                    fadeStart to Color.Black,
+                                    0.55f to Color.Black,
                                     1f to Color.Transparent
                                 )
                             )
                             onDrawWithContent {
                                 drawContent()
-                                if (panelProgress < 0.95f) {
+                                if (bottomFadeAlpha > 0.001f) {
                                     drawRect(
                                         brush = gradientMask,
                                         blendMode = BlendMode.DstIn
@@ -799,6 +799,12 @@ fun IosStyledPlayer(
                     .graphicsLayer {
                         alpha = panelProgress
                     }
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {
+                        onLyricsInteraction()
+                    }
             ) {
                 InPlayerQueueContent(
                     currentTrack = track,
@@ -811,6 +817,7 @@ fun IosStyledPlayer(
                     onRemoveTrack = { idx: Int ->
                         MusicPlayerState.removeFromQueue(idx)
                     },
+                    onUserInteraction = onLyricsInteraction,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -2131,6 +2138,7 @@ private fun InPlayerQueueContent(
     isPlaying: Boolean,
     onTrackClick: (MusicTrack) -> Unit,
     onRemoveTrack: (Int) -> Unit,
+    onUserInteraction: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -2140,9 +2148,20 @@ private fun InPlayerQueueContent(
         emptyList()
     }
 
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            onUserInteraction()
+        }
+    }
+
     LazyColumn(
         state = listState,
-        modifier = modifier,
+        modifier = modifier.clickable(
+            indication = null,
+            interactionSource = remember { MutableInteractionSource() }
+        ) {
+            onUserInteraction()
+        },
         contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
