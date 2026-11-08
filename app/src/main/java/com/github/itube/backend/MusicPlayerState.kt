@@ -732,6 +732,12 @@ object MusicPlayerState : Player.Listener {
         }
         if (playbackState == Player.STATE_ENDED) {
             currentTrack?.let { ListeningProfile.onTrackCompleted(it) }
+            if (SleepTimerState.shouldStopAtEnd()) {
+                SleepTimerState.onEndedTriggered()
+                pause()
+                companionVideoPlayer?.pause()
+                return
+            }
             if (repeatMode == Player.REPEAT_MODE_ONE) {
                 seekTo(0L)
                 exoPlayer?.play()

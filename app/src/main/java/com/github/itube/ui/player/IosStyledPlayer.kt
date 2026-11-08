@@ -58,6 +58,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -85,6 +86,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.github.itube.SleepTimerState
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
 import com.github.itube.ui.components.popupScrimColor
@@ -1100,6 +1102,7 @@ private fun MusicOptionsModal(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     var showSpeedDialog by remember { mutableStateOf(false) }
+    var showSleepTimerDialog by remember { mutableStateOf(false) }
     val currentSpeed = MusicPlayerState.playbackSpeed
 
     ModalBottomSheet(
@@ -1203,6 +1206,29 @@ private fun MusicOptionsModal(
                         }
                     }
                 }
+            } else if (showSleepTimerDialog) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { showSleepTimerDialog = false }) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = c.onSurface)
+                    }
+                    Text(
+                        text = "Sleep Timer",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = c.onSurface
+                    )
+                }
+                SleepTimerContent(
+                    isVideo = false,
+                    onDismiss = onDismiss,
+                    onSetMessage = { msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    }
+                )
             } else {
                 // Menu item: Playback Speed
                 MusicOptionItem(
@@ -1210,6 +1236,14 @@ private fun MusicOptionsModal(
                     title = "Playback Speed",
                     subtitle = if (currentSpeed == 1.0f) "Normal" else "${currentSpeed}x",
                     onClick = { showSpeedDialog = true }
+                )
+
+                // Menu item: Sleep Timer
+                MusicOptionItem(
+                    icon = Icons.Rounded.Bedtime,
+                    title = "Sleep Timer",
+                    subtitle = SleepTimerState.labelForMusic(),
+                    onClick = { showSleepTimerDialog = true }
                 )
 
                 // Menu item: Download

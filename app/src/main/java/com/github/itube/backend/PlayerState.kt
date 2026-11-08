@@ -911,7 +911,22 @@ class PlayerState(private val scope: CoroutineScope) {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (SleepTimerState.shouldStopAtEnd() && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                SleepTimerState.onEndedTriggered()
+                controller?.pause()
+                actionMessage = "Sleep timer: video ended"
+            }
             if (mediaItem != null) onPlayerMovedTo(mediaItem)
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) {
+                if (SleepTimerState.shouldStopAtEnd()) {
+                    SleepTimerState.onEndedTriggered()
+                    controller?.pause()
+                    actionMessage = "Sleep timer: video ended"
+                }
+            }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) = takeVideoSize(videoSize)
@@ -1009,7 +1024,7 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Speed, Comments, Queue, Captions, Transcript, Description, OnTheGo }
+enum class PlayerSheet { Quality, Speed, Comments, Queue, Captions, Transcript, Description, OnTheGo, SleepTimer }
 
 /** Comments, description, transcript, and on-the-go open as a panel inside the player (PlayerScreen), not a sheet. */
 val PlayerSheet?.isPanel: Boolean get() = this == PlayerSheet.Comments || this == PlayerSheet.Transcript || this == PlayerSheet.Description || this == PlayerSheet.OnTheGo

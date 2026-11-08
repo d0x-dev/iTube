@@ -43,6 +43,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsNone
@@ -1191,6 +1192,7 @@ private fun PlayerMoreSheet(
             PlayerMoreRow(Icons.Rounded.Tune, "On-the-go", "Premium listening controls & audio mode") { state.onTheGoOpen = true; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Description, "Description", "Read the video description") { state.sheet = PlayerSheet.Description; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Speed, "Playback speed", "${PlaybackSpeed.label(state.speed)}×") { state.sheet = PlayerSheet.Speed; onDismiss() }
+            PlayerMoreRow(Icons.Rounded.Bedtime, "Sleep timer", SleepTimerState.labelForVideo()) { state.sheet = PlayerSheet.SleepTimer; onDismiss() }
             PlayerMoreRow(Icons.Rounded.HighQuality, "Video quality", state.details?.quality ?: "Auto") { state.sheet = PlayerSheet.Quality; onDismiss() }
             PlayerMoreRow(Icons.Rounded.GraphicEq, "Audio track", "Original") { state.actionMessage = "Original audio track selected"; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Download, "Download", "Save video or audio") { onDownload() }

@@ -130,6 +130,7 @@ import com.github.itube.ui.player.NewClassicMiniPlayer
 import com.github.itube.ui.player.IosStyledPlayer
 import com.github.itube.ui.player.LyricsV2Screen
 import com.github.itube.ui.player.MusicQueueSheet
+import com.github.itube.ui.player.SleepTimerSheet
 
 class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -273,6 +274,12 @@ fun AirStreamApp() {
         }
         MusicPlayerState.onPlaybackStarted = {
             player.close()
+        }
+        SleepTimerState.onTimerExpired = {
+            player.controller?.pause()
+            MusicPlayerState.pause()
+            MusicPlayerState.companionVideoPlayer?.pause()
+            player.actionMessage = "Sleep timer: playback paused"
         }
     }
 
@@ -1132,6 +1139,11 @@ fun AirStreamApp() {
             PlayerSheet.Comments, PlayerSheet.Transcript, PlayerSheet.Description, PlayerSheet.OnTheGo -> Unit // a panel inside the player (PlayerScreen)
             PlayerSheet.Captions -> CaptionsSheet(player, onDismiss = { player.sheet = null }, onTranscript = { player.sheet = PlayerSheet.Transcript })
             PlayerSheet.Queue -> QueueSheet(player, onDismiss = { player.sheet = null })
+            PlayerSheet.SleepTimer -> SleepTimerSheet(
+                isVideo = true,
+                onDismiss = { player.sheet = null },
+                onSetMessage = { player.actionMessage = it }
+            )
             null -> Unit
         }
         optionsFor?.let { video ->
