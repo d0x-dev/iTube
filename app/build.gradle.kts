@@ -1,4 +1,6 @@
 import java.io.File
+import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -18,7 +20,7 @@ android {
         applicationId = "com.github.itube"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
+        versionCode = 5
         versionName = "1.1.0"
     }
 
@@ -31,18 +33,32 @@ android {
         }
     }
 
+    signingConfigs {
+        val keystorePropertiesFile = rootProject.file("keystore.properties")
+        if (keystorePropertiesFile.exists()) {
+            val properties = Properties()
+            properties.load(FileInputStream(keystorePropertiesFile))
+            create("release") {
+                storeFile = file(properties.getProperty("storeFile"))
+                storePassword = properties.getProperty("storePassword")
+                keyAlias = properties.getProperty("keyAlias")
+                keyPassword = properties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
             isShrinkResources = false
         }
         release {
-            // Judge speed and smoothness on this build type, never on debug.
             isMinifyEnabled = true
             isShrinkResources = true
-            // Sideloaded personal build: the debug key is fine until there's a reason
-            // to distribute it.
-            signingConfig = signingConfigs.getByName("debug")
+            val keystorePropertiesFile = rootProject.file("keystore.properties")
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -101,12 +117,8 @@ afterEvaluate {
             }
         }
     }
-    tasks.named("assembleRelease") {
-        finalizedBy(copyReleaseApk)
-    }
-    tasks.named("packageRelease") {
-        finalizedBy(copyReleaseApk)
-    }
+    // copyReleaseApkAsITube is available on demand, but not run as an automatic finalizer
+    // to avoid overwriting APKs signed via Android Studio GUI.
 
     val validDebugApkRegex = Regex("""^iTube-(arm64-v8a|armeabi-v7a|universal|x86|x86_64)-debug\.apk$""")
 
