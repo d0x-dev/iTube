@@ -106,6 +106,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -113,7 +114,11 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -121,6 +126,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -311,10 +317,15 @@ fun IosStyledPlayer(
     var optionsOpen by remember { mutableStateOf(false) }
     var showDownloadSheet by remember { mutableStateOf(false) }
 
+    var rootBoxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val density = LocalDensity.current
+    var titleBottomPadding by remember { mutableStateOf(350.dp) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            .onGloballyPositioned { rootBoxCoords = it }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -338,57 +349,19 @@ fun IosStyledPlayer(
                 }
             }
     ) {
-        // ── 1. Full Screen High Quality Artwork / Fullscreen Video Backdrop with Lower Blur Effect ──
-        if (isVideoMode && isVideoFullscreen) {
-            val zoomMode = MusicPlayerState.videoFullscreenZoomMode
-            val scaleVal by animateFloatAsState(
-                targetValue = when (zoomMode) {
-                    0 -> 1.0f // Fit (own resolution)
-                    1 -> 1.0f // Fill (zoom to cover)
-                    else -> 1.28f // Deep zoom (bounded so key elements remain visible)
-                },
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
-                label = "fullscreenZoomScale"
-            )
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clipToBounds(),
-                contentAlignment = Alignment.Center
-            ) {
-                AndroidView(
-                    factory = { ctx ->
-                        TextureView(ctx).apply {
-                            videoPlayer.setVideoTextureView(this)
-                        }
-                    },
-                    update = {
-                        videoPlayer.setVideoTextureView(it)
-                    },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .aspectFit(videoAspect, cover = zoomMode >= 1)
-                        .graphicsLayer {
-                            scaleX = scaleVal
-                            scaleY = scaleVal
-                        }
-                )
-            }
-        } else {
-            AsyncImage(
-                model = track.thumbnailUrl?.highQualityThumbnail(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = 1.05f
-                        scaleY = 1.05f
-                        alpha = 0.85f
-                    }
-            )
-        }
+        // ── 1. Full Screen High Quality Artwork Backdrop with Lower Blur Effect ──
+        AsyncImage(
+            model = track.thumbnailUrl?.highQualityThumbnail(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.05f
+                    scaleY = 1.05f
+                    alpha = 0.85f
+                }
+        )
 
         // Lower Ambient Blur Layer (AirBeats Immersive Backdrop mask)
         AsyncImage(
@@ -438,6 +411,84 @@ fun IosStyledPlayer(
                     )
                 )
         )
+
+        // ── Fullscreen Video (When in Video Mode & Fullscreen) ──
+        if (isVideoMode && isVideoFullscreen) {
+            val zoomMode = MusicPlayerState.videoFullscreenZoomMode
+            val scaleVal by animateFloatAsState(
+                targetValue = when (zoomMode) {
+                    0 -> 1.0f // Fit (own resolution)
+                    1 -> 1.0f // Fill (zoom to cover)
+                    else -> 1.28f // Deep zoom (bounded so key elements remain visible)
+                },
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                label = "fullscreenZoomScale"
+            )
+            val bottomPaddingDp by animateDpAsState(
+                targetValue = if (zoomMode == 0) titleBottomPadding + 8.dp else 0.dp,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                label = "fullscreenBottomPadding"
+            )
+            val topPaddingDp by animateDpAsState(
+                targetValue = if (zoomMode == 0) 58.dp else 0.dp,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                label = "fullscreenTopPadding"
+            )
+            val verticalBias by animateFloatAsState(
+                targetValue = if (zoomMode == 0) 1.0f else 0.0f,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                label = "fullscreenVerticalBias"
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = topPaddingDp, bottom = bottomPaddingDp)
+                    .clipToBounds(),
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        TextureView(ctx).apply {
+                            videoPlayer.setVideoTextureView(this)
+                        }
+                    },
+                    update = {
+                        videoPlayer.setVideoTextureView(it)
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .videoAspectFit(
+                            aspect = videoAspect,
+                            cover = zoomMode >= 1,
+                            verticalBias = verticalBias
+                        )
+                        .graphicsLayer {
+                            scaleX = scaleVal
+                            scaleY = scaleVal
+                        }
+                )
+            }
+
+            // In Zoom to Fill / Deep Zoom (zoomMode >= 1), add a subtle legibility scrim over the full-bleed video
+            if (zoomMode >= 1) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0f to Color.Black.copy(alpha = 0.35f),
+                                    0.25f to Color.Transparent,
+                                    0.55f to Color.Black.copy(alpha = 0.40f),
+                                    0.80f to Color.Black.copy(alpha = 0.80f),
+                                    1f to Color.Black.copy(alpha = 0.95f),
+                                )
+                            )
+                        )
+                )
+            }
+        }
 
         // ── Square Video Window (When in Video Mode, not fullscreen) ──
         if (isVideoMode && !isVideoFullscreen) {
@@ -700,6 +751,17 @@ fun IosStyledPlayer(
                         .align(Alignment.TopStart)
                         // Sit just above the button row with tight breathing space, avoiding the high floating gap.
                         .graphicsLayer { translationY = -50.dp.toPx() }
+                        .onGloballyPositioned { coords ->
+                            val root = rootBoxCoords
+                            if (root != null && root.isAttached && coords.isAttached) {
+                                val pos = root.localPositionOf(coords, Offset.Zero)
+                                val titleVisualTop = pos.y - with(density) { 50.dp.toPx() }
+                                val bottomPx = root.size.height - titleVisualTop
+                                if (bottomPx > 0f) {
+                                    titleBottomPadding = with(density) { bottomPx.toDp() }
+                                }
+                            }
+                        }
                 ) {
                     Text(
                         text = track.title,
@@ -1589,5 +1651,30 @@ private fun QualityOptionRow(
                 modifier = Modifier.size(20.dp)
             )
         }
+    }
+}
+
+/**
+ * Layout modifier for fullscreen video in iMusic.
+ * - In original fit (cover = false, verticalBias = 1f): aligns placeable to the bottom of the container,
+ *   resting just above the song metadata.
+ * - In zoom modes (cover = true): centers and fills the available display bounds.
+ */
+private fun Modifier.videoAspectFit(
+    aspect: Float,
+    cover: Boolean = false,
+    verticalBias: Float = 0f
+) = layout { measurable, constraints ->
+    val boxW = constraints.maxWidth.toFloat()
+    val boxH = if (constraints.hasBoundedHeight) constraints.maxHeight.toFloat() else boxW / aspect
+    val byHeight = (boxW / boxH > aspect) != cover
+    val w = (if (byHeight) boxH * aspect else boxW).roundToInt()
+    val h = (if (byHeight) boxH else boxW / aspect).roundToInt()
+    val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+    layout(boxW.roundToInt(), boxH.roundToInt()) {
+        val x = ((boxW - w) / 2f).roundToInt()
+        val bias = if (cover) 0.5f else ((verticalBias + 1f) / 2f).coerceIn(0f, 1f)
+        val y = ((boxH - h) * bias).roundToInt()
+        placeable.place(x, y)
     }
 }
