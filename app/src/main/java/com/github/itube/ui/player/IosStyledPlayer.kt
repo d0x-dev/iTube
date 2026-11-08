@@ -346,6 +346,13 @@ fun IosStyledPlayer(
 
     LaunchedEffect(isPanelOpen) {
         if (isPanelOpen) {
+            // Automatically switch back to audio mode when opening Queue or Lyrics
+            if (MusicPlayerState.isVideoMode) {
+                MusicPlayerState.isVideoMode = false
+                MusicPlayerState.isVideoFullscreen = false
+                MusicPlayerState.videoFullscreenZoomMode = 0
+                videoPlayer.pause()
+            }
             areLyricsControlsVisible = true
             lastLyricsInteractionTime = System.currentTimeMillis()
             if (isLyricsOpen && MusicPlayerState.lyrics.isEmpty() && !MusicPlayerState.lyricsLoading) {
@@ -1328,6 +1335,12 @@ fun IosStyledPlayer(
                             )
                             .clickable {
                                 onLyricsInteraction()
+                                if (MusicPlayerState.isVideoMode) {
+                                    MusicPlayerState.isVideoMode = false
+                                    MusicPlayerState.isVideoFullscreen = false
+                                    MusicPlayerState.videoFullscreenZoomMode = 0
+                                    videoPlayer.pause()
+                                }
                                 MusicPlayerState.lyricsOpen = false
                                 MusicPlayerState.queueOpen = !MusicPlayerState.queueOpen
                             },
@@ -1353,6 +1366,12 @@ fun IosStyledPlayer(
                             )
                             .clickable {
                                 onLyricsInteraction()
+                                if (MusicPlayerState.isVideoMode) {
+                                    MusicPlayerState.isVideoMode = false
+                                    MusicPlayerState.isVideoFullscreen = false
+                                    MusicPlayerState.videoFullscreenZoomMode = 0
+                                    videoPlayer.pause()
+                                }
                                 MusicPlayerState.queueOpen = false
                                 MusicPlayerState.lyricsOpen = !MusicPlayerState.lyricsOpen
                             },
