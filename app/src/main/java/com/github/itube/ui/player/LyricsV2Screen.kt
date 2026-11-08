@@ -118,18 +118,24 @@ import kotlin.math.sin
 
 private fun unescapeLyricsHtml(text: String): String {
     if (!text.contains('&')) return text
+    val cleaned = text
+        .replace("&#39;", "'")
+        .replace("&#039;", "'")
+        .replace("&#x27;", "'")
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
     return try {
-        android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+        if (cleaned.contains('&')) {
+            android.text.Html.fromHtml(cleaned, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+        } else {
+            cleaned
+        }
     } catch (_: Throwable) {
-        text
-            .replace("&#39;", "'")
-            .replace("&quot;", "\"")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&apos;", "'")
-            .replace("&#x27;", "'")
-            .replace("&#039;", "'")
+        cleaned
     }
 }
 

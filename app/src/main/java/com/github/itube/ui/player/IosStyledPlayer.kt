@@ -128,6 +128,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -784,31 +785,36 @@ fun IosStyledPlayer(
                         } else Modifier
                     )
             ) {
+                // Sharp Artwork Image with smooth gradient alpha fade at the bottom edge in music mode
+                // dissolving seamlessly into the down-side ambient blur layer below.
+                // As panelProgress moves towards 1f, fadeStart and fadeEndAlpha animate to 1f,
+                // leaving the morphing 44dp avatar 100% opaque, crisp, and intact at the top-left corner.
+                val fadeStart = lerpFloat(0.60f, 1f, panelProgress)
+                val fadeEndAlpha = panelProgress
+
                 AsyncImage(
                     model = track.thumbnailUrl?.highQualityThumbnail(),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Gentle blend at the bottom of the sharp avatar into the down-side blur layer in music mode
-                if (panelProgress < 0.20f) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .height(fullBleedHeight * 0.35f)
-                            .graphicsLayer {
-                                alpha = (1f - panelProgress * 5f).coerceIn(0f, 1f)
-                            }
-                            .background(
-                                Brush.verticalGradient(
-                                    0f to Color.Transparent,
-                                    1f to Color.Black.copy(alpha = 0.55f)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            if (fadeStart < 0.999f || fadeEndAlpha < 0.999f) {
+                                val mask = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0f to Color.Black,
+                                        fadeStart to Color.Black,
+                                        1f to Color.Black.copy(alpha = fadeEndAlpha)
+                                    )
                                 )
-                            )
-                    )
-                }
+                                drawRect(brush = mask, blendMode = BlendMode.DstIn)
+                            }
+                        }
+                )
             }
         }
 
