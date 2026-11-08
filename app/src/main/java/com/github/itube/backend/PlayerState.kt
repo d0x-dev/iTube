@@ -1040,7 +1040,7 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Speed, Comments, Queue, Captions, Transcript, Description, OnTheGo, SleepTimer }
+enum class PlayerSheet { Quality, Speed, Comments, Queue, Captions, Transcript, Description, OnTheGo, SleepTimer, Equalizer }
 
 /** Comments, description, transcript, and on-the-go open as a panel inside the player (PlayerScreen), not a sheet. */
 val PlayerSheet?.isPanel: Boolean get() = this == PlayerSheet.Comments || this == PlayerSheet.Transcript || this == PlayerSheet.Description || this == PlayerSheet.OnTheGo

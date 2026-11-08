@@ -130,6 +130,7 @@ import com.github.itube.ui.player.NewClassicMiniPlayer
 import com.github.itube.ui.player.IosStyledPlayer
 import com.github.itube.ui.player.LyricsV2Screen
 import com.github.itube.ui.player.MusicQueueSheet
+import com.github.itube.ui.components.EqualizerSheet
 import com.github.itube.ui.player.SleepTimerSheet
 
 class MainActivity : ComponentActivity() {
@@ -1146,6 +1147,7 @@ fun AirStreamApp() {
                 onDismiss = { player.sheet = null },
                 onSetMessage = { player.actionMessage = it }
             )
+            PlayerSheet.Equalizer -> EqualizerSheet(onDismiss = { player.sheet = null })
             null -> Unit
         }
         optionsFor?.let { video ->

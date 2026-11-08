@@ -38,6 +38,7 @@ class AirStreamApplication : Application(), ImageLoaderFactory {
         ShortsSetting.init(this)
         com.github.itube.ui.components.BlurSetting.init(this)
         ShortsBank.init(this)
+        com.github.itube.backend.EqualizerManager.init(this)
         AppUpdate.init(this)
         // Stream URLs are bound to the network they were fetched on: forget them on a switch.
         getSystemService(android.net.ConnectivityManager::class.java)?.registerDefaultNetworkCallback(

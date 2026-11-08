@@ -77,6 +77,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -109,6 +110,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.github.itube.SleepTimerState
+import com.github.itube.ui.components.EqualizerSheet
 import com.github.itube.ui.components.TrackBlurPopup
 import com.github.itube.ui.components.popupContainerColor
 import com.github.itube.ui.components.popupScrimColor
@@ -469,6 +471,7 @@ fun IosStyledPlayer(
     var commentsOpen by remember { mutableStateOf(false) }
     var optionsOpen by remember { mutableStateOf(false) }
     var showDownloadSheet by remember { mutableStateOf(false) }
+    var showEqualizerSheet by remember { mutableStateOf(false) }
 
     var rootBoxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var titleBottomPadding by remember { mutableStateOf(350.dp) }
@@ -1488,7 +1491,24 @@ fun IosStyledPlayer(
 
         // ── 4. Comments Bottom Panel Overlay ──
         if (commentsOpen) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .zIndex(100f)
+                    .fillMaxSize()
+            ) {
+                // Dimmed backdrop scrim to dismiss on tap outside
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            commentsOpen = false
+                        }
+                )
+
                 val commentsState = remember(track.id) { CommentsState(scope) }
                 LaunchedEffect(track.id) {
                     commentsState.load(track.id)
@@ -1510,6 +1530,10 @@ fun IosStyledPlayer(
                     optionsOpen = false
                     showDownloadSheet = true
                 },
+                onEqualizer = {
+                    optionsOpen = false
+                    showEqualizerSheet = true
+                },
                 onAddToPlaylist = onAddToPlaylist,
                 onSwitchToVideo = {
                     optionsOpen = false
@@ -1517,6 +1541,13 @@ fun IosStyledPlayer(
                     onCollapse()
                     onSwitchToVideo?.invoke(track.asVideoItem(), pos)
                 }
+            )
+        }
+
+        // ── 5b. Equalizer Sheet Overlay ──
+        if (showEqualizerSheet) {
+            EqualizerSheet(
+                onDismiss = { showEqualizerSheet = false }
             )
         }
 
@@ -1585,6 +1616,7 @@ private fun MusicOptionsModal(
     track: MusicTrack,
     onDismiss: () -> Unit,
     onDownload: () -> Unit,
+    onEqualizer: () -> Unit,
     onAddToPlaylist: ((VideoItem) -> Unit)? = null,
     onSwitchToVideo: () -> Unit,
 ) {
@@ -1736,6 +1768,14 @@ private fun MusicOptionsModal(
                     title = "Sleep Timer",
                     subtitle = SleepTimerState.labelForMusic(),
                     onClick = { showSleepTimerDialog = true }
+                )
+
+                // Menu item: Equalizer
+                MusicOptionItem(
+                    icon = Icons.Rounded.Equalizer,
+                    title = "Equalizer",
+                    subtitle = if (com.github.itube.backend.EqualizerManager.isEnabled) "On (${com.github.itube.backend.EqualizerManager.currentPresetName})" else "Audio frequencies & presets",
+                    onClick = onEqualizer
                 )
 
                 // Menu item: Download

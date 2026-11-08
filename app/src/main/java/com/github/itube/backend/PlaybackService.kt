@@ -127,6 +127,16 @@ class PlaybackService : MediaSessionService() {
         resumeSaver = ResumeSaver(player).also(player::addListener)
         player.addListener(SessionSaver())
         watchTime = WatchTimeReporter(player).also(player::addListener)
+        player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying && player.audioSessionId > 0) {
+                    com.github.itube.backend.EqualizerManager.bindAudioSession(player.audioSessionId)
+                }
+            }
+        })
+        if (player.audioSessionId > 0) {
+            com.github.itube.backend.EqualizerManager.bindAudioSession(player.audioSessionId)
+        }
         session = MediaSession.Builder(this, player)
             // Must differ from MusicPlaybackService when video and music sessions overlap.
             .setId("itube_video")

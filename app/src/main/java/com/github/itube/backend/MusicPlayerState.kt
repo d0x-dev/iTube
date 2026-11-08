@@ -25,6 +25,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.core.content.ContextCompat
+import com.github.itube.backend.EqualizerManager
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import coil.imageLoader
@@ -175,6 +176,9 @@ object MusicPlayerState : Player.Listener {
         // Keep the media session connected while the app is open. This is deliberately a bind,
         // not a foreground-service start; Media3 promotes the service only for real playback.
         ensureSystemMediaSession()
+        exoPlayer?.audioSessionId?.let { id ->
+            if (id > 0) EqualizerManager.bindAudioSession(id)
+        }
         startProgressLoop()
     }
 
@@ -778,6 +782,9 @@ object MusicPlayerState : Player.Listener {
         if (playing) {
             resolvingStream = false
             isLoading = false
+            exoPlayer?.audioSessionId?.let { id ->
+                if (id > 0) EqualizerManager.bindAudioSession(id)
+            }
         }
     }
 

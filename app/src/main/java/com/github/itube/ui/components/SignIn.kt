@@ -32,10 +32,12 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Refresh
+import com.github.itube.ui.components.EqualizerSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.RadioButton
@@ -196,6 +198,7 @@ fun AccountSheet(onSignIn: () -> Unit, onSignedOut: () -> Unit, onDismiss: () ->
     val c = MaterialTheme.colorScheme
     val profile = Account.profile
     var detail by remember { mutableStateOf<SettingsDetail?>(null) }
+    var showEqualizerSheet by remember { mutableStateOf(false) }
     // One sheet for the entire account/settings flow. skipPartiallyExpanded means it opens
     // at full height while remaining a normal draggable sheet that can be pulled down.
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -207,11 +210,22 @@ fun AccountSheet(onSignIn: () -> Unit, onSignedOut: () -> Unit, onDismiss: () ->
     ) {
         Column(Modifier.fillMaxSize()) {
             if (detail == null) {
-                AccountSettingsHome(profile, onSignIn, onSignedOut, onDismiss) { detail = it }
+                AccountSettingsHome(
+                    profile = profile,
+                    onSignIn = onSignIn,
+                    onSignedOut = onSignedOut,
+                    onDismiss = onDismiss,
+                    onOpen = { detail = it },
+                    onOpenEqualizer = { showEqualizerSheet = true }
+                )
             } else {
                 SettingsDetailContent(detail!!, onBack = { detail = null })
             }
         }
+    }
+
+    if (showEqualizerSheet) {
+        EqualizerSheet(onDismiss = { showEqualizerSheet = false })
     }
 }
 
@@ -224,6 +238,7 @@ private fun AccountSettingsHome(
     onSignedOut: () -> Unit,
     onDismiss: () -> Unit,
     onOpen: (SettingsDetail) -> Unit,
+    onOpenEqualizer: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     Column(
@@ -257,6 +272,7 @@ private fun AccountSettingsHome(
         SettingsEntry(R.drawable.settings_captions, "Captions", "Language, style and translation") { onOpen(SettingsDetail.Captions) }
         SettingsEntry(R.drawable.settings_sponsorblock, "SponsorBlock", "Skip sponsors and other segments") { onOpen(SettingsDetail.SponsorBlock) }
         SettingsEntry(R.drawable.settings_player, "Player controls", "Video control preferences") { onOpen(SettingsDetail.Player) }
+        SettingsEntry(Icons.Rounded.Equalizer, "Equalizer", "Custom audio frequencies, presets & bass boost") { onOpenEqualizer() }
         SettingsEntry(R.drawable.settings_shorts, "Shorts", "Shorts feed preferences") { onOpen(SettingsDetail.Shorts) }
         SettingsEntry(R.drawable.settings_effects, "Popup effects", "Frosted popup appearance") { onOpen(SettingsDetail.PopupEffects) }
         SettingsEntry(Icons.Rounded.Storage, "Storage & music cache", "Cached songs, offline audio and storage limits") { onOpen(SettingsDetail.Storage) }

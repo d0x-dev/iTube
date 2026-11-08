@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.QueueMusic
@@ -64,6 +65,7 @@ import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.outlined.ContentCopy
+import com.github.itube.ui.components.EqualizerSheet
 import com.github.itube.ui.components.MaterialLoader
 import com.github.itube.ui.components.VideoRowSkeleton
 import androidx.compose.material3.Icon
@@ -1162,6 +1164,9 @@ private fun AccountActions(state: PlayerState) {
     if (showDownload) {
         DownloadSheet(state, onDismiss = { showDownload = false })
     }
+    if (state.sheet == PlayerSheet.Equalizer) {
+        EqualizerSheet(onDismiss = { state.sheet = null })
+    }
 
 }
 
@@ -1194,6 +1199,14 @@ private fun PlayerMoreSheet(
             PlayerMoreRow(Icons.Rounded.Speed, "Playback speed", "${PlaybackSpeed.label(state.speed)}×") { state.sheet = PlayerSheet.Speed; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Bedtime, "Sleep timer", SleepTimerState.labelForVideo()) { state.sheet = PlayerSheet.SleepTimer; onDismiss() }
             PlayerMoreRow(Icons.Rounded.HighQuality, "Video quality", state.details?.quality ?: "Auto") { state.sheet = PlayerSheet.Quality; onDismiss() }
+            PlayerMoreRow(
+                Icons.Rounded.Equalizer,
+                "Equalizer",
+                if (com.github.itube.backend.EqualizerManager.isEnabled) "On (${com.github.itube.backend.EqualizerManager.currentPresetName})" else "Audio frequencies & presets"
+            ) {
+                state.sheet = PlayerSheet.Equalizer
+                onDismiss()
+            }
             PlayerMoreRow(Icons.Rounded.GraphicEq, "Audio track", "Original") { state.actionMessage = "Original audio track selected"; onDismiss() }
             PlayerMoreRow(Icons.Rounded.Download, "Download", "Save video or audio") { onDownload() }
             PlayerMoreRow(Icons.Rounded.QueueMusic, "Queue", "Manage upcoming videos") { state.sheet = PlayerSheet.Queue; onDismiss() }
