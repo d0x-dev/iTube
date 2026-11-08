@@ -1,4 +1,5 @@
-<img width="100%" alt="iTube Banner" src="https://github.com/user-attachments/assets/b7b1c6ba-3f3d-4e56-bb44-099b6ff319de" />
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/4ccc92fa-8c74-4c45-b9ea-34c4ad31f1e8" />
+
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/d0x-dev/Storage/main/itube/App_icon_nobg.png" width="160" alt="iTube App Icon" />
