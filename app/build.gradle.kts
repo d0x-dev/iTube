@@ -104,10 +104,13 @@ afterEvaluate {
                     apk.copyTo(File(targetDir, releaseName), overwrite = true)
                     apk.copyTo(File(targetDir, apk.name), overwrite = true)
                     if (apk.name.contains("universal") || apk.name == "app-release.apk") {
+                        val legacySignedName = "iTube_v${android.defaultConfig.versionName}_signed.apk"
                         apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
                         apk.copyTo(File(dir, "iTube-release.apk"), overwrite = true)
+                        apk.copyTo(File(dir, legacySignedName), overwrite = true)
                         apk.copyTo(File(targetDir, "iTube.apk"), overwrite = true)
                         apk.copyTo(File(targetDir, "iTube-release.apk"), overwrite = true)
+                        apk.copyTo(File(targetDir, legacySignedName), overwrite = true)
                         apk.copyTo(File(targetDir, "app-release.apk"), overwrite = true)
                     }
                 }
