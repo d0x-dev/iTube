@@ -2111,10 +2111,14 @@ private fun InPlayerQueueContent(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-    val upcomingItems = if (currentIndex in 0 until queue.size - 1) {
-        queue.subList(currentIndex + 1, queue.size)
-    } else {
-        emptyList()
+    // Snapshot queue into an immutable list to protect against SnapshotStateList.SubList ConcurrentModificationException
+    val queueSnapshot = queue.toList()
+    val upcomingItems: List<MusicTrack> = remember(queueSnapshot, currentIndex) {
+        if (currentIndex in 0 until queueSnapshot.size - 1) {
+            queueSnapshot.drop(currentIndex + 1)
+        } else {
+            emptyList()
+        }
     }
 
     LaunchedEffect(listState.isScrollInProgress) {
@@ -2404,7 +2408,12 @@ private fun InPlayerQueueContent(
 
                 // Close / Remove icon
                 IconButton(
-                    onClick = { onRemoveTrack(actualIdx) },
+                    onClick = {
+                        val targetIdx = currentIndex + 1 + relativeIdx
+                        if (targetIdx in queue.indices) {
+                            onRemoveTrack(targetIdx)
+                        }
+                    },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(

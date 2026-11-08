@@ -43,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -268,8 +269,13 @@ fun MusicQueueSheet(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Split into Upcoming (Up Next) and Previously Played
-            val playedItems = if (currentIndex > 0) queue.subList(0, currentIndex.coerceAtMost(queue.size)) else emptyList()
-            val upcomingItems = if (currentIndex >= 0 && currentIndex + 1 < queue.size) queue.subList(currentIndex + 1, queue.size) else emptyList()
+            val queueSnapshot = queue.toList()
+            val playedItems: List<MusicTrack> = remember(queueSnapshot, currentIndex) {
+                if (currentIndex > 0) queueSnapshot.take(currentIndex.coerceAtMost(queueSnapshot.size)) else emptyList()
+            }
+            val upcomingItems: List<MusicTrack> = remember(queueSnapshot, currentIndex) {
+                if (currentIndex >= 0 && currentIndex + 1 < queueSnapshot.size) queueSnapshot.drop(currentIndex + 1) else emptyList()
+            }
 
             LazyColumn(
                 modifier = Modifier
@@ -304,7 +310,10 @@ fun MusicQueueSheet(
                         }
                     }
                 } else {
-                    itemsIndexed(upcomingItems) { relativeIdx, item ->
+                    itemsIndexed(
+                        items = upcomingItems,
+                        key = { idx, item -> "upcoming_sheet_${item.id}_$idx" }
+                    ) { relativeIdx, item ->
                         val actualIdx = currentIndex + 1 + relativeIdx
                         QueueItemRow(
                             track = item,
@@ -314,7 +323,9 @@ fun MusicQueueSheet(
                                 MusicPlayerState.play(item, null)
                             },
                             onRemove = {
-                                MusicPlayerState.removeFromQueue(actualIdx)
+                                if (actualIdx in MusicPlayerState.queue.indices) {
+                                    MusicPlayerState.removeFromQueue(actualIdx)
+                                }
                             }
                         )
                     }
@@ -331,7 +342,10 @@ fun MusicQueueSheet(
                         )
                     }
 
-                    itemsIndexed(playedItems.reversed()) { revIdx, item ->
+                    itemsIndexed(
+                        items = playedItems.reversed(),
+                        key = { idx, item -> "played_sheet_${item.id}_$idx" }
+                    ) { revIdx, item ->
                         val actualIdx = currentIndex - 1 - revIdx
                         QueueItemRow(
                             track = item,
@@ -341,7 +355,9 @@ fun MusicQueueSheet(
                                 MusicPlayerState.play(item, null)
                             },
                             onRemove = {
-                                MusicPlayerState.removeFromQueue(actualIdx)
+                                if (actualIdx in MusicPlayerState.queue.indices) {
+                                    MusicPlayerState.removeFromQueue(actualIdx)
+                                }
                             }
                         )
                     }

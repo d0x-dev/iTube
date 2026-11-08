@@ -689,9 +689,19 @@ object MusicPlayerState : Player.Listener {
 
     fun removeFromQueue(index: Int) {
         if (index in queue.indices) {
+            val wasPlayingCurrent = (index == queueIndex)
             queue.removeAt(index)
-            if (queueIndex >= queue.size) {
+            if (index < queueIndex) {
+                queueIndex = (queueIndex - 1).coerceAtLeast(0)
+            } else if (queueIndex >= queue.size) {
                 queueIndex = (queue.size - 1).coerceAtLeast(0)
+            }
+            if (wasPlayingCurrent) {
+                if (queue.isNotEmpty() && queueIndex in queue.indices) {
+                    play(queue[queueIndex], null)
+                } else {
+                    close()
+                }
             }
             MusicPlaybackService.refreshCustomLayout()
         }
