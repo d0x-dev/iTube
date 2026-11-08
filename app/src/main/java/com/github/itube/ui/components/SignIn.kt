@@ -453,7 +453,7 @@ private fun DeveloperCard(
             Text(profileLabel, color = c.primary, fontSize = 12.sp)
             Text(websiteLabel, color = c.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.pressable { uri.openUri(websiteUrl) })
         }
-        Icon(Icons.Rounded.AccountCircle, contentDescription = "Open GitHub profile", tint = c.primary)
+        Icon(painterResource(R.drawable.github), contentDescription = "Open GitHub profile", tint = c.primary, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -576,19 +576,36 @@ private fun AboutSocialHub(uri: androidx.compose.ui.platform.UriHandler) {
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AboutSocialBubble("f", "https://www.facebook.com/venom.digital.creator", uri)
-        AboutSocialBubble("◎", "https://www.instagram.com/Dark__336/", uri)
-        AboutSocialBubble("GH", "https://github.com/d0x-dev", uri)
-        AboutSocialBubble("G", "https://g.dev/Darkboy336", uri)
-        AboutSocialBubble("↗", "https://darkboy.pro", uri)
+        AboutSocialBubble(R.drawable.facebook, "https://www.facebook.com/venom.digital.creator", uri, "Facebook")
+        AboutSocialBubble(R.drawable.instagram, "https://www.instagram.com/Dark__336/", uri, "Instagram")
+        AboutSocialBubble(R.drawable.github, "https://github.com/d0x-dev", uri, "GitHub")
+        AboutSocialBubble(R.drawable.google, "https://g.dev/Darkboy336", uri, "Google Developer")
+        AboutSocialBubble(R.drawable.arrow_outward, "https://darkboy.pro", uri, "Website")
     }
 }
 
 @Composable
-private fun AboutSocialBubble(label: String, url: String, uri: androidx.compose.ui.platform.UriHandler) {
+private fun AboutSocialBubble(
+    @androidx.annotation.DrawableRes iconRes: Int,
+    url: String,
+    uri: androidx.compose.ui.platform.UriHandler,
+    contentDescription: String,
+) {
     val c = MaterialTheme.colorScheme
-    Box(Modifier.size(38.dp).clip(CircleShape).border(1.dp, c.outline.copy(alpha = 0.55f), CircleShape).pressable { uri.openUri(url) }, contentAlignment = Alignment.Center) {
-        Text(label, color = c.primary, fontWeight = FontWeight.ExtraBold, fontSize = if (label == "GH") 11.sp else 19.sp)
+    Box(
+        Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .border(1.dp, c.outline.copy(alpha = 0.55f), CircleShape)
+            .pressable { uri.openUri(url) },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = c.primary,
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
 
@@ -620,8 +637,8 @@ private fun FounderCardV2(
         Text(profileLabel, color = c.onSurfaceVariant, maxLines = 1, fontSize = 10.sp)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
-            AboutSocialBubble("GH", githubUrl, uri)
-            AboutSocialBubble("↗", website, uri)
+            AboutSocialBubble(R.drawable.github, githubUrl, uri, "GitHub")
+            AboutSocialBubble(R.drawable.arrow_outward, website, uri, "Website")
         }
     }
 }

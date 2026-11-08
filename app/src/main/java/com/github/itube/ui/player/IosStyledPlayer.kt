@@ -41,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.Image
 import com.github.itube.FastHoldPill
+import com.github.itube.MusicArtist
 import com.github.itube.ui.components.AnimatedEqualizer
 import com.github.itube.aspectFit
 import androidx.compose.ui.draw.clipToBounds
@@ -90,6 +91,7 @@ import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LibraryAdd
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Repeat
@@ -202,6 +204,7 @@ fun IosStyledPlayer(
     onCollapse: () -> Unit = { MusicPlayerState.expanded = false },
     onSwitchToVideo: ((VideoItem, Long) -> Unit)? = null,
     onAddToPlaylist: ((VideoItem) -> Unit)? = null,
+    onArtistClick: ((MusicArtist) -> Unit)? = null,
 ) {
     val track = MusicPlayerState.currentTrack ?: return
     val isPlaying = MusicPlayerState.isPlaying
@@ -827,6 +830,7 @@ fun IosStyledPlayer(
                         MusicPlayerState.removeFromQueue(idx)
                     },
                     onUserInteraction = onLyricsInteraction,
+                    onArtistClick = onArtistClick,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -1049,7 +1053,12 @@ fun IosStyledPlayer(
                         color = Color.White.copy(alpha = 0.72f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee()
+                        modifier = Modifier
+                            .clickable {
+                                val aId = track.artistId?.takeIf { it.isNotBlank() } ?: track.artists
+                                onArtistClick?.invoke(MusicArtist(id = aId, name = track.artists))
+                            }
+                            .basicMarquee()
                     )
                 }
             }
@@ -1162,7 +1171,12 @@ fun IosStyledPlayer(
                             color = Color.White.copy(alpha = 0.72f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.basicMarquee()
+                            modifier = Modifier
+                                .clickable {
+                                    val aId = track.artistId?.takeIf { it.isNotBlank() } ?: track.artists
+                                    onArtistClick?.invoke(MusicArtist(id = aId, name = track.artists))
+                                }
+                                .basicMarquee()
                         )
                     }
 
@@ -1536,6 +1550,10 @@ fun IosStyledPlayer(
                     showEqualizerSheet = true
                 },
                 onAddToPlaylist = onAddToPlaylist,
+                onArtistClick = { artist ->
+                    optionsOpen = false
+                    onArtistClick?.invoke(artist)
+                },
                 onSwitchToVideo = {
                     optionsOpen = false
                     val pos = MusicPlayerState.positionMs
@@ -1619,6 +1637,7 @@ private fun MusicOptionsModal(
     onDownload: () -> Unit,
     onEqualizer: () -> Unit,
     onAddToPlaylist: ((VideoItem) -> Unit)? = null,
+    onArtistClick: ((MusicArtist) -> Unit)? = null,
     onSwitchToVideo: () -> Unit,
 ) {
     TrackBlurPopup()
@@ -1674,7 +1693,12 @@ private fun MusicOptionsModal(
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable {
+                            onDismiss()
+                            val aId = track.artistId?.takeIf { it.isNotBlank() } ?: track.artists
+                            onArtistClick?.invoke(MusicArtist(id = aId, name = track.artists))
+                        }
                     )
                 }
                 IconButton(onClick = onDismiss) {
@@ -1778,6 +1802,20 @@ private fun MusicOptionsModal(
                     subtitle = if (com.github.itube.backend.EqualizerManager.isEnabled) "On (${com.github.itube.backend.EqualizerManager.currentPresetName})" else "Audio frequencies & presets",
                     onClick = onEqualizer
                 )
+
+                // Menu item: View Artist
+                if (onArtistClick != null) {
+                    MusicOptionItem(
+                        icon = Icons.Rounded.Person,
+                        title = "View Artist",
+                        subtitle = track.artists,
+                        onClick = {
+                            onDismiss()
+                            val aId = track.artistId?.takeIf { it.isNotBlank() } ?: track.artists
+                            onArtistClick(MusicArtist(id = aId, name = track.artists))
+                        }
+                    )
+                }
 
                 // Menu item: Download
                 MusicOptionItem(
@@ -2163,6 +2201,7 @@ private fun InPlayerQueueContent(
     onTrackClick: (MusicTrack) -> Unit,
     onRemoveTrack: (Int) -> Unit,
     onUserInteraction: () -> Unit = {},
+    onArtistClick: ((MusicArtist) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -2325,7 +2364,11 @@ private fun InPlayerQueueContent(
                         ),
                         color = Color.White.copy(alpha = 0.62f),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable {
+                            val aId = currentTrack.artistId?.takeIf { it.isNotBlank() } ?: currentTrack.artists
+                            onArtistClick?.invoke(MusicArtist(id = aId, name = currentTrack.artists))
+                        }
                     )
                 }
 
@@ -2454,7 +2497,11 @@ private fun InPlayerQueueContent(
                         ),
                         color = Color.White.copy(alpha = 0.62f),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable {
+                            val aId = item.artistId?.takeIf { it.isNotBlank() } ?: item.artists
+                            onArtistClick?.invoke(MusicArtist(id = aId, name = item.artists))
+                        }
                     )
                 }
 

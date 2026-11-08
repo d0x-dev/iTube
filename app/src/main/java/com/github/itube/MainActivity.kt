@@ -1055,6 +1055,11 @@ fun AirStreamApp() {
                             player.open(videoItem, expand = true, startPositionMs = posMs)
                         },
                         onAddToPlaylist = player::openPlaylists,
+                        onArtistClick = { artist ->
+                            musicSheetState.collapseSoft()
+                            ListeningProfile.recordArtistView(artist)
+                            openMusicArtist = artist
+                        },
                     )
                 }
             )
