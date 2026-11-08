@@ -6,6 +6,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+base {
+    archivesName.set("iTube")
+}
+
 android {
     namespace = "com.github.itube"
     compileSdk = 36
@@ -66,19 +70,38 @@ android {
 
 // Keep the standard assemble tasks, and also emit consistently named APKs for sharing.
 afterEvaluate {
+    fun safeCopyApk(source: File, dest: File) {
+        if (source.canonicalPath != dest.canonicalPath) {
+            source.copyTo(dest, overwrite = true)
+        }
+    }
+
     val copyDebugApk = tasks.register("copyDebugApkAsITube") {
-        dependsOn("packageDebug")
+        mustRunAfter("packageDebug")
         doLast {
             val dir = layout.buildDirectory.dir("outputs/apk/debug").get().asFile
             if (dir.exists()) {
-                dir.listFiles { _, name -> name.endsWith(".apk") && !name.startsWith("iTube") }?.forEach { apk ->
-                    val debugName = apk.name.replace("app-", "iTube-")
-                    val cleanName = debugName.replace("-debug", "")
-                    apk.copyTo(File(dir, cleanName), overwrite = true)
-                    apk.copyTo(File(dir, debugName), overwrite = true)
-                    if (apk.name.contains("universal") || apk.name == "app-debug.apk") {
-                        apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
-                        apk.copyTo(File(dir, "iTube-debug.apk"), overwrite = true)
+                val apks = dir.listFiles { _, name ->
+                    name.endsWith(".apk") &&
+                    (name.startsWith("iTube-") || name.startsWith("app-")) &&
+                    name.endsWith("-debug.apk")
+                } ?: emptyArray()
+
+                apks.forEach { apk ->
+                    val cleanAbi = apk.name
+                        .removePrefix("app-")
+                        .removePrefix("iTube-")
+                        .removeSuffix("-debug.apk")
+                    val isUniversal = cleanAbi == "universal" || apk.name == "app-debug.apk" || apk.name == "iTube-debug.apk"
+
+                    val debugName = if (isUniversal) "iTube-universal-debug.apk" else "iTube-$cleanAbi-debug.apk"
+                    val shortName = if (isUniversal) "iTube-universal.apk" else "iTube-$cleanAbi.apk"
+
+                    safeCopyApk(apk, File(dir, shortName))
+                    safeCopyApk(apk, File(dir, debugName))
+                    if (isUniversal) {
+                        safeCopyApk(apk, File(dir, "iTube.apk"))
+                        safeCopyApk(apk, File(dir, "iTube-debug.apk"))
                     }
                 }
             }
@@ -87,37 +110,56 @@ afterEvaluate {
     tasks.named("assembleDebug") {
         finalizedBy(copyDebugApk)
     }
+    tasks.named("packageDebug") {
+        finalizedBy(copyDebugApk)
+    }
 
     val copyReleaseApk = tasks.register("copyReleaseApkAsITube") {
-        dependsOn("packageRelease")
+        mustRunAfter("packageRelease")
         doLast {
             val dir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
             val targetDir = project.file("release")
             targetDir.mkdirs()
             if (dir.exists()) {
-                dir.listFiles { _, name -> name.endsWith(".apk") && !name.startsWith("iTube") }?.forEach { apk ->
-                    val releaseName = apk.name.replace("app-", "iTube-")
-                    val cleanName = releaseName.replace("-release", "")
-                    apk.copyTo(File(dir, cleanName), overwrite = true)
-                    apk.copyTo(File(dir, releaseName), overwrite = true)
-                    apk.copyTo(File(targetDir, cleanName), overwrite = true)
-                    apk.copyTo(File(targetDir, releaseName), overwrite = true)
-                    apk.copyTo(File(targetDir, apk.name), overwrite = true)
-                    if (apk.name.contains("universal") || apk.name == "app-release.apk") {
+                val apks = dir.listFiles { _, name ->
+                    name.endsWith(".apk") &&
+                    (name.startsWith("iTube-") || name.startsWith("app-")) &&
+                    name.endsWith("-release.apk")
+                } ?: emptyArray()
+
+                apks.forEach { apk ->
+                    val cleanAbi = apk.name
+                        .removePrefix("app-")
+                        .removePrefix("iTube-")
+                        .removeSuffix("-release.apk")
+                    val isUniversal = cleanAbi == "universal" || apk.name == "app-release.apk" || apk.name == "iTube-release.apk"
+
+                    val releaseName = if (isUniversal) "iTube-universal-release.apk" else "iTube-$cleanAbi-release.apk"
+                    val shortName = if (isUniversal) "iTube-universal.apk" else "iTube-$cleanAbi.apk"
+
+                    safeCopyApk(apk, File(dir, shortName))
+                    safeCopyApk(apk, File(dir, releaseName))
+                    safeCopyApk(apk, File(targetDir, shortName))
+                    safeCopyApk(apk, File(targetDir, releaseName))
+                    safeCopyApk(apk, File(targetDir, apk.name))
+                    if (isUniversal) {
                         val legacySignedName = "iTube_v${android.defaultConfig.versionName}_signed.apk"
-                        apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
-                        apk.copyTo(File(dir, "iTube-release.apk"), overwrite = true)
-                        apk.copyTo(File(dir, legacySignedName), overwrite = true)
-                        apk.copyTo(File(targetDir, "iTube.apk"), overwrite = true)
-                        apk.copyTo(File(targetDir, "iTube-release.apk"), overwrite = true)
-                        apk.copyTo(File(targetDir, legacySignedName), overwrite = true)
-                        apk.copyTo(File(targetDir, "app-release.apk"), overwrite = true)
+                        safeCopyApk(apk, File(dir, "iTube.apk"))
+                        safeCopyApk(apk, File(dir, "iTube-release.apk"))
+                        safeCopyApk(apk, File(dir, legacySignedName))
+                        safeCopyApk(apk, File(targetDir, "iTube.apk"))
+                        safeCopyApk(apk, File(targetDir, "iTube-release.apk"))
+                        safeCopyApk(apk, File(targetDir, legacySignedName))
+                        safeCopyApk(apk, File(targetDir, "app-release.apk"))
                     }
                 }
             }
         }
     }
     tasks.named("assembleRelease") {
+        finalizedBy(copyReleaseApk)
+    }
+    tasks.named("packageRelease") {
         finalizedBy(copyReleaseApk)
     }
 }

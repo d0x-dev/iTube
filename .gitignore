@@ -20,4 +20,6 @@ keystore.properties
 # Build artifacts & split APKs
 app/release/app-*-release.apk
 app/release/iTube*.apk
+app/release/baselineProfiles/
+app/release/output-metadata.json
 release_notes_*.md
