@@ -667,44 +667,49 @@ fun iMusicArtistScreen(
                         .padding(horizontal = 12.dp),
                 )
 
-                IconButton(
-                    onClick = {
-                        val shareUrl = "https://music.youtube.com/channel/$channelId"
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "$displayName - $shareUrl")
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Share"))
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            if (topBarAlpha < 0.5f) Color.Black.copy(alpha = 0.35f) else Color.Transparent,
-                            CircleShape
-                        ),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        Icons.Rounded.Share,
-                        contentDescription = "Share",
-                        tint = if (topBarAlpha < 0.5f) Color.White else c.onBackground,
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        artistOptionsFor = MusicArtist(id = channelId, name = displayName, thumbnailUrl = heroImageUrl)
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            if (topBarAlpha < 0.5f) Color.Black.copy(alpha = 0.35f) else Color.Transparent,
-                            CircleShape
-                        ),
-                ) {
-                    Icon(
-                        Icons.Rounded.MoreVert,
-                        contentDescription = "Options",
-                        tint = if (topBarAlpha < 0.5f) Color.White else c.onBackground,
-                    )
+                    IconButton(
+                        onClick = {
+                            val shareUrl = "https://music.youtube.com/channel/$channelId"
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, "$displayName - $shareUrl")
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share"))
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                if (topBarAlpha < 0.5f) Color.Black.copy(alpha = 0.35f) else Color.Transparent,
+                                CircleShape
+                            ),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Share,
+                            contentDescription = "Share",
+                            tint = if (topBarAlpha < 0.5f) Color.White else c.onBackground,
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            artistOptionsFor = MusicArtist(id = channelId, name = displayName, thumbnailUrl = heroImageUrl)
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                if (topBarAlpha < 0.5f) Color.Black.copy(alpha = 0.35f) else Color.Transparent,
+                                CircleShape
+                            ),
+                    ) {
+                        Icon(
+                            Icons.Rounded.MoreVert,
+                            contentDescription = "Options",
+                            tint = if (topBarAlpha < 0.5f) Color.White else c.onBackground,
+                        )
+                    }
                 }
             }
         }

@@ -2294,7 +2294,9 @@ private fun InPlayerQueueContent(
                             modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Shuffle,
+                                painter = painterResource(
+                                    if (MusicPlayerState.shuffleEnabled) R.drawable.shuffle_on else R.drawable.shuffle
+                                ),
                                 contentDescription = "Shuffle",
                                 tint = if (MusicPlayerState.shuffleEnabled) Color.White else Color.White.copy(alpha = 0.45f),
                                 modifier = Modifier.size(20.dp)
@@ -2310,7 +2312,13 @@ private fun InPlayerQueueContent(
                             modifier = Modifier.size(36.dp)
                         ) {
                             Icon(
-                                imageVector = if (MusicPlayerState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                                painter = painterResource(
+                                    when (MusicPlayerState.repeatMode) {
+                                        Player.REPEAT_MODE_ONE -> R.drawable.repeat_one_on
+                                        Player.REPEAT_MODE_ALL -> R.drawable.repeat_on
+                                        else -> R.drawable.repeat
+                                    }
+                                ),
                                 contentDescription = "Repeat",
                                 tint = if (MusicPlayerState.repeatMode != Player.REPEAT_MODE_OFF) Color.White else Color.White.copy(alpha = 0.45f),
                                 modifier = Modifier.size(20.dp)

@@ -78,7 +78,13 @@ class MusicPlaybackService : MediaSessionService() {
                         .add(shuffleCommand)
                         .add(repeatCommand)
                         .build()
-                    return MediaSession.ConnectionResult.accept(commands, base.availablePlayerCommands)
+                    val playerCommands = base.availablePlayerCommands.buildUpon()
+                        .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                        .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .add(Player.COMMAND_SEEK_TO_NEXT)
+                        .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .build()
+                    return MediaSession.ConnectionResult.accept(commands, playerCommands)
                 }
 
                 override fun onCustomCommand(
@@ -113,7 +119,6 @@ class MusicPlaybackService : MediaSessionService() {
     private fun refreshLayout() {
         val activeSession = session ?: return
         val hasTrack = MusicPlayerState.currentTrack != null
-        val canNavigate = hasTrack && MusicPlayerState.queue.size > 1
         val repeatIcon = when (MusicPlayerState.repeatMode) {
             Player.REPEAT_MODE_ONE -> R.drawable.repeat_one_on
             Player.REPEAT_MODE_ALL -> R.drawable.repeat_on
@@ -126,18 +131,12 @@ class MusicPlaybackService : MediaSessionService() {
         }
         activeSession.setCustomLayout(
             listOf(
-                CommandButton.Builder().setDisplayName("Previous")
-                    .setIconResId(R.drawable.flow_previous).setSessionCommand(previousCommand)
-                    .setEnabled(canNavigate).build(),
                 CommandButton.Builder().setDisplayName(if (MusicPlayerState.shuffleEnabled) "Shuffle on" else "Shuffle off")
                     .setIconResId(if (MusicPlayerState.shuffleEnabled) R.drawable.shuffle_on else R.drawable.shuffle)
                     .setSessionCommand(shuffleCommand).setEnabled(hasTrack).build(),
                 CommandButton.Builder().setDisplayName(repeatLabel)
                     .setIconResId(repeatIcon).setSessionCommand(repeatCommand)
                     .setEnabled(hasTrack).build(),
-                CommandButton.Builder().setDisplayName("Next")
-                    .setIconResId(R.drawable.flow_next).setSessionCommand(nextCommand)
-                    .setEnabled(canNavigate).build(),
             ),
         )
     }

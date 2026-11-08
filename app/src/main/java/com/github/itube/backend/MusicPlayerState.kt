@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -182,16 +183,24 @@ object MusicPlayerState : Player.Listener {
         startProgressLoop()
     }
 
-    /** The service publishes this same player through MediaSession; it never creates a second player. */
-    fun playerForSession(context: Context): ExoPlayer {
+    private var sessionPlayer: Player? = null
+
+    /** The service publishes this player wrapper through MediaSession; it routes seekToNext/Previous to MusicPlayerState queue navigation. */
+    fun playerForSession(context: Context): Player {
         init(context)
-        return requireNotNull(exoPlayer)
+        val base = requireNotNull(exoPlayer)
+        val existing = sessionPlayer
+        if (existing != null) return existing
+        val wrapper = MusicSessionForwardingPlayer(base)
+        sessionPlayer = wrapper
+        return wrapper
     }
 
     private var musicControllerFuture: ListenableFuture<MediaController>? = null
     private var musicController: MediaController? = null
 
     fun onServiceDestroyed() {
+        sessionPlayer = null
         musicController = null
         musicControllerFuture = null
     }
@@ -832,5 +841,54 @@ object MusicPlayerState : Player.Listener {
         resolvingStream = false
         isLoading = false
         isPlaying = false
+    }
+}
+
+private class MusicSessionForwardingPlayer(player: Player) : ForwardingPlayer(player) {
+    override fun getAvailableCommands(): Player.Commands {
+        val canNavigate = MusicPlayerState.currentTrack != null && MusicPlayerState.queue.size > 1
+        return super.getAvailableCommands().buildUpon()
+            .apply {
+                if (canNavigate) {
+                    add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                    add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    add(Player.COMMAND_SEEK_TO_NEXT)
+                    add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                }
+            }
+            .build()
+    }
+
+    override fun isCommandAvailable(command: Int): Boolean {
+        val canNavigate = MusicPlayerState.currentTrack != null && MusicPlayerState.queue.size > 1
+        return when (command) {
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> canNavigate
+            else -> super.isCommandAvailable(command)
+        }
+    }
+
+    override fun hasPreviousMediaItem(): Boolean {
+        return MusicPlayerState.queue.size > 1 || MusicPlayerState.positionMs > 3000L
+    }
+
+    override fun hasNextMediaItem(): Boolean {
+        return MusicPlayerState.queue.size > 1 || MusicPlayerState.repeatMode == Player.REPEAT_MODE_ALL
+    }
+
+    override fun seekToPrevious() {
+        MusicPlayerState.skipPrevious()
+    }
+
+    override fun seekToPreviousMediaItem() {
+        MusicPlayerState.skipPrevious()
+    }
+
+    override fun seekToNext() {
+        MusicPlayerState.skipNext()
+    }
+
+    override fun seekToNextMediaItem() {
+        MusicPlayerState.skipNext()
     }
 }

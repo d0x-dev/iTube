@@ -1,5 +1,6 @@
 package com.github.itube.ui.player
 
+import com.github.itube.R
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -247,14 +248,18 @@ fun MusicQueueSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 QueueModeButton(
-                    icon = Icons.Rounded.Shuffle,
+                    iconRes = if (shuffleEnabled) R.drawable.shuffle_on else R.drawable.shuffle,
                     label = "Shuffle",
                     selected = shuffleEnabled,
                     onClick = MusicPlayerState::toggleShuffle,
                     modifier = Modifier.weight(1f),
                 )
                 QueueModeButton(
-                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    iconRes = when (repeatMode) {
+                        Player.REPEAT_MODE_ONE -> R.drawable.repeat_one_on
+                        Player.REPEAT_MODE_ALL -> R.drawable.repeat_on
+                        else -> R.drawable.repeat
+                    },
                     label = when (repeatMode) {
                         Player.REPEAT_MODE_ALL -> "Repeat all"
                         Player.REPEAT_MODE_ONE -> "Repeat one"
@@ -369,7 +374,7 @@ fun MusicQueueSheet(
 
 @Composable
 private fun QueueModeButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    @androidx.annotation.DrawableRes iconRes: Int,
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -387,7 +392,12 @@ private fun QueueModeButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
+            Icon(
+                painter = androidx.compose.ui.res.painterResource(iconRes),
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(19.dp)
+            )
             Spacer(Modifier.width(8.dp))
             Text(label, color = tint, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
         }
