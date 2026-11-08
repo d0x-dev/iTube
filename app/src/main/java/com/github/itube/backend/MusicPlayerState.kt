@@ -27,6 +27,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.github.itube.backend.SafeUnbindContext
 import com.github.itube.backend.lyrics.LyricsHelper
 import com.google.common.util.concurrent.ListenableFuture
@@ -272,6 +274,18 @@ object MusicPlayerState : Player.Listener {
         durationMs = 0L
         currentTrack = resolvedTrack
         ListeningProfile.onTrackPlaybackStarted(resolvedTrack)
+        // Pre-warm the ambient glow thumbnail in Coil cache immediately so player background renders on frame 1
+        appContext?.let { ctx ->
+            val thumb = resolvedTrack.thumbnailUrl?.highQualityThumbnail() ?: resolvedTrack.thumbnailUrl
+            if (!thumb.isNullOrBlank()) {
+                val preReq = ImageRequest.Builder(ctx)
+                    .data(thumb)
+                    .allowHardware(false)
+                    .size(160)
+                    .build()
+                ctx.imageLoader.enqueue(preReq)
+            }
+        }
         // Match the video player: a MediaController connection lets Media3 publish its own
         // native Android media card when this player reaches a playable state.
         ensureSystemMediaSession()

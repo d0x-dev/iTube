@@ -157,8 +157,11 @@ import kotlin.math.roundToInt
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.github.itube.CommentsPanel
 import com.github.itube.CommentsState
 import com.github.itube.DownloadSheet
@@ -221,6 +224,29 @@ fun IosStyledPlayer(
 
     var activeTextureView by remember { mutableStateOf<TextureView?>(null) }
     var videoAmbientFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+    var audioAmbientFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // Synchronously / defensively fetch software decoded bitmap (allowHardware = false)
+    // for audio ambient glow, eliminating Android 12 RenderEffect GraphicBuffer failures on first play or song switch!
+    LaunchedEffect(track.id, track.thumbnailUrl) {
+        val targetUrl = track.thumbnailUrl?.highQualityThumbnail() ?: track.thumbnailUrl
+        if (!targetUrl.isNullOrBlank()) {
+            val bmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    val req = ImageRequest.Builder(context)
+                        .data(targetUrl)
+                        .allowHardware(false)
+                        .size(160)
+                        .build()
+                    val result = context.imageLoader.execute(req) as? SuccessResult
+                    result?.drawable?.toBitmap()
+                }.getOrNull()
+            }
+            if (bmp != null) {
+                audioAmbientFrame = bmp.asImageBitmap()
+            }
+        }
+    }
 
     // Live video ambient sampling: periodically samples a tiny 64x36 frame from the active TextureView
     // and illuminates the entire display with dynamic, full-screen ambient glow in video mode (Zero black voids!).
@@ -495,10 +521,10 @@ fun IosStyledPlayer(
             label = "blurScale"
         )
 
-        val liveFrame = if (isVideoMode) videoAmbientFrame else null
-        if (liveFrame != null) {
+        val ambientFrame = if (isVideoMode) videoAmbientFrame else audioAmbientFrame
+        if (ambientFrame != null) {
             Image(
-                bitmap = liveFrame,
+                bitmap = ambientFrame,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -511,24 +537,23 @@ fun IosStyledPlayer(
                     }
             )
         } else {
-            key(track.id) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(track.thumbnailUrl?.highQualityThumbnail())
-                        .crossfade(250)
-                        .build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .blur(50.dp)
-                        .graphicsLayer {
-                            scaleX = blurScale
-                            scaleY = blurScale
-                            alpha = 0.95f
-                        }
-                )
-            }
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(track.thumbnailUrl?.highQualityThumbnail() ?: track.thumbnailUrl)
+                    .allowHardware(false)
+                    .size(160)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(48.dp)
+                    .graphicsLayer {
+                        scaleX = blurScale
+                        scaleY = blurScale
+                        alpha = 0.95f
+                    }
+            )
         }
 
         // ── 2. Luminous Scrim Gradient (Background Scrim Overlay - Rich Colors, never pitch black) ──
@@ -853,7 +878,7 @@ fun IosStyledPlayer(
                 key(track.id) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
-                            .data(track.thumbnailUrl?.highQualityThumbnail())
+                            .data(track.thumbnailUrl?.highQualityThumbnail() ?: track.thumbnailUrl)
                             .crossfade(200)
                             .build(),
                         contentDescription = null,
