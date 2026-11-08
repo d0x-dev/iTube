@@ -116,6 +116,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -155,6 +156,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.github.itube.CommentsPanel
 import com.github.itube.CommentsState
 import com.github.itube.DownloadSheet
@@ -463,21 +465,25 @@ fun IosStyledPlayer(
             label = "blurScale"
         )
 
-        AsyncImage(
-            model = track.thumbnailUrl?.highQualityThumbnail(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .offset(y = blurTranslateY)
-                .graphicsLayer {
-                    scaleX = blurScale
-                    scaleY = blurScale
-                    alpha = 0.95f
-                    compositingStrategy = CompositingStrategy.Offscreen
-                }
-                .blur(50.dp)
-        )
+        key(track.id) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(track.thumbnailUrl?.highQualityThumbnail())
+                    .crossfade(250)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(y = blurTranslateY)
+                    .blur(50.dp)
+                    .graphicsLayer {
+                        scaleX = blurScale
+                        scaleY = blurScale
+                        alpha = 0.95f
+                    }
+            )
+        }
 
         // ── 2. Luminous Scrim Gradient (Background Scrim Overlay - Rich Colors, never pitch black) ──
         Box(
@@ -794,29 +800,34 @@ fun IosStyledPlayer(
                 val fadeStart = lerpFloat(1.0f, 0.72f, playerFadeWeight)
                 val fadeEndAlpha = lerpFloat(1.0f, 0.0f, playerFadeWeight)
 
-                AsyncImage(
-                    model = track.thumbnailUrl?.highQualityThumbnail(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            compositingStrategy = CompositingStrategy.Offscreen
-                        }
-                        .drawWithContent {
-                            drawContent()
-                            if (fadeStart < 0.999f || fadeEndAlpha < 0.999f) {
-                                val mask = Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0f to Color.Black,
-                                        fadeStart to Color.Black,
-                                        1f to Color.Black.copy(alpha = fadeEndAlpha)
-                                    )
-                                )
-                                drawRect(brush = mask, blendMode = BlendMode.DstIn)
+                key(track.id) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(track.thumbnailUrl?.highQualityThumbnail())
+                            .crossfade(200)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
                             }
-                        }
-                )
+                            .drawWithContent {
+                                drawContent()
+                                if (fadeStart < 0.999f || fadeEndAlpha < 0.999f) {
+                                    val mask = Brush.verticalGradient(
+                                        colorStops = arrayOf(
+                                            0f to Color.Black,
+                                            fadeStart to Color.Black,
+                                            1f to Color.Black.copy(alpha = fadeEndAlpha)
+                                        )
+                                    )
+                                    drawRect(brush = mask, blendMode = BlendMode.DstIn)
+                                }
+                            }
+                    )
+                }
             }
         }
 
