@@ -1106,9 +1106,9 @@ fun AirStreamApp() {
 
         if (showFullscreen) FullscreenPlayer(player, onExit = { orientation.exitFullscreen() })
 
-        // ── Fullscreen Lyrics v2 Screen ──
+        // ── Fullscreen Lyrics v2 Screen (Now integrated smoothly inside IosStyledPlayer) ──
         AnimatedVisibility(
-            visible = MusicPlayerState.lyricsOpen,
+            visible = false && MusicPlayerState.lyricsOpen,
             enter = slideInVertically(tween(360, easing = Motion.Emphasized)) { it },
             exit = slideOutVertically(tween(300, easing = Motion.Emphasized)) { it },
         ) {

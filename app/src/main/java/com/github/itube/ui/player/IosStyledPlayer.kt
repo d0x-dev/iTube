@@ -11,20 +11,30 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.Image
 import com.github.itube.FastHoldPill
@@ -144,6 +154,15 @@ import com.github.itube.ui.components.WavySlider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+private fun lerpDp(start: Dp, stop: Dp, fraction: Float): Dp =
+    start + (stop - start) * fraction
+
+private fun lerpSp(start: TextUnit, stop: TextUnit, fraction: Float): TextUnit =
+    (start.value + (stop.value - start.value) * fraction).sp
+
+private fun lerpFloat(start: Float, stop: Float, fraction: Float): Float =
+    start + (stop - start) * fraction
 
 /**
  * AirBeats Immersive Refresh Music Player Screen.
@@ -296,8 +315,75 @@ fun IosStyledPlayer(
         }
     }
 
+    val isLyricsOpen = MusicPlayerState.lyricsOpen
+    val lyricsProgress by animateFloatAsState(
+        targetValue = if (isLyricsOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "lyricsProgress"
+    )
+
+    var areLyricsControlsVisible by remember { mutableStateOf(true) }
+    var lastLyricsInteractionTime by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(isLyricsOpen) {
+        if (isLyricsOpen) {
+            areLyricsControlsVisible = true
+            lastLyricsInteractionTime = System.currentTimeMillis()
+            if (MusicPlayerState.lyrics.isEmpty() && !MusicPlayerState.lyricsLoading) {
+                MusicPlayerState.refreshLyrics()
+            }
+        } else {
+            areLyricsControlsVisible = true
+        }
+    }
+
+    LaunchedEffect(track.id, isLyricsOpen) {
+        if (isLyricsOpen && MusicPlayerState.lyrics.isEmpty() && !MusicPlayerState.lyricsLoading) {
+            MusicPlayerState.refreshLyrics()
+        }
+    }
+
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekPosition by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(isLyricsOpen, lastLyricsInteractionTime, areLyricsControlsVisible, isSeeking) {
+        if (isLyricsOpen && areLyricsControlsVisible && !isSeeking) {
+            delay(2000L)
+            areLyricsControlsVisible = false
+        }
+    }
+
+    val onLyricsInteraction: () -> Unit = {
+        lastLyricsInteractionTime = System.currentTimeMillis()
+        if (!areLyricsControlsVisible) {
+            areLyricsControlsVisible = true
+        }
+    }
+
+    val density = LocalDensity.current
+
+    val controlsTranslationY by animateFloatAsState(
+        targetValue = if (!isLyricsOpen || areLyricsControlsVisible) 0f else with(density) { 340.dp.toPx() },
+        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+        label = "lyricsControlsTranslationY"
+    )
+
+    val controlsAlpha by animateFloatAsState(
+        targetValue = if (!isLyricsOpen || areLyricsControlsVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 280),
+        label = "lyricsControlsAlpha"
+    )
+
+    val lyricsBottomPadding by animateDpAsState(
+        targetValue = if (!areLyricsControlsVisible && isLyricsOpen) 24.dp else 295.dp,
+        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+        label = "lyricsBottomPadding"
+    )
+
     BackHandler(enabled = MusicPlayerState.expanded) {
-        if (MusicPlayerState.isVideoFullscreen) {
+        if (isLyricsOpen) {
+            MusicPlayerState.lyricsOpen = false
+        } else if (MusicPlayerState.isVideoFullscreen) {
             MusicPlayerState.isVideoFullscreen = false
             MusicPlayerState.videoFullscreenZoomMode = 0
             zoomFeedbackText = "Square Mode"
@@ -305,9 +391,6 @@ fun IosStyledPlayer(
             onCollapse()
         }
     }
-
-    var isSeeking by remember { mutableStateOf(false) }
-    var seekPosition by remember { mutableLongStateOf(0L) }
 
     val safeDuration = duration.coerceAtLeast(1L)
     val displayPos = if (isSeeking) seekPosition else position
@@ -317,15 +400,10 @@ fun IosStyledPlayer(
     var optionsOpen by remember { mutableStateOf(false) }
     var showDownloadSheet by remember { mutableStateOf(false) }
 
-    var rootBoxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val density = LocalDensity.current
-    var titleBottomPadding by remember { mutableStateOf(350.dp) }
-
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .onGloballyPositioned { rootBoxCoords = it }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -349,83 +427,120 @@ fun IosStyledPlayer(
                 }
             }
     ) {
-        // ── 1. Full Screen High Quality Artwork Backdrop with Lower Blur Effect ──
-        AsyncImage(
-            model = track.thumbnailUrl?.highQualityThumbnail(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = 1.05f
-                    scaleY = 1.05f
-                    alpha = 0.85f
-                }
+        val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+        val maxWidthDp = maxWidth
+        val maxHeightDp = maxHeight
+
+        // Continuous Avatar Morphing Calculations
+        val fullArtSize = minOf(maxWidthDp - 48.dp, 330.dp, maxHeightDp * 0.38f)
+        val normalArtX = (maxWidthDp - fullArtSize) / 2
+        val normalArtY = statusBarTop + 48.dp
+
+        val collapsedArtSize = 48.dp
+        val collapsedArtX = 20.dp
+        val collapsedArtY = statusBarTop + 14.dp
+
+        val currentArtSize = lerpDp(fullArtSize, collapsedArtSize, lyricsProgress)
+        val currentArtX = lerpDp(normalArtX, collapsedArtX, lyricsProgress)
+        val currentArtY = lerpDp(normalArtY, collapsedArtY, lyricsProgress)
+        val currentArtCorner = lerpDp(16.dp, 10.dp, lyricsProgress)
+        val currentArtElevation = lerpDp(14.dp, 0.dp, lyricsProgress)
+
+        // Title and More Button Row Morphing
+        val normalTitleX = 24.dp
+        val normalTitleY = normalArtY + fullArtSize + 16.dp
+        val normalTitleWidth = maxWidthDp - 48.dp
+
+        val collapsedTitleX = collapsedArtX + collapsedArtSize + 12.dp
+        val collapsedTitleY = statusBarTop + 14.dp
+        val collapsedTitleWidth = (maxWidthDp - collapsedTitleX - 54.dp).coerceAtLeast(100.dp)
+
+        val currentTitleX = lerpDp(normalTitleX, collapsedTitleX, lyricsProgress)
+        val currentTitleY = lerpDp(normalTitleY, collapsedTitleY, lyricsProgress)
+        val currentTitleWidth = lerpDp(normalTitleWidth, collapsedTitleWidth, lyricsProgress)
+        val titleScale = lerpFloat(1.0f, 0.74f, lyricsProgress)
+
+        val normalMoreX = maxWidthDp - 24.dp - 40.dp
+        val normalMoreY = normalTitleY + 2.dp
+        val collapsedMoreX = maxWidthDp - 20.dp - 40.dp
+        val collapsedMoreY = statusBarTop + 18.dp
+        val currentMoreX = lerpDp(normalMoreX, collapsedMoreX, lyricsProgress)
+        val currentMoreY = lerpDp(normalMoreY, collapsedMoreY, lyricsProgress)
+
+        // 1. Vibrant blurred artwork layer (expands upward into full screen when lyrics open)
+        val blurSeamY by animateDpAsState(
+            targetValue = if (isLyricsOpen) 0.dp else (normalArtY + fullArtSize - 30.dp),
+            animationSpec = tween(420, easing = FastOutSlowInEasing),
+            label = "blurSeam"
         )
 
-        // Lower Ambient Blur Layer (AirBeats Immersive Backdrop mask)
         AsyncImage(
             model = track.thumbnailUrl?.highQualityThumbnail(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(90.dp)
+                .blur(65.dp)
                 .graphicsLayer {
-                    compositingStrategy = CompositingStrategy.Offscreen
+                    scaleX = 1.15f
+                    scaleY = 1.15f
                 }
                 .drawWithCache {
-                    val blurMask = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0f to Color.Transparent,
-                            0.44f to Color.Transparent,
-                            0.56f to Color.Black.copy(alpha = 0.6f),
-                            0.72f to Color.Black,
-                            1f to Color.Black,
+                    val seamPx = blurSeamY.toPx()
+                    val totalH = size.height
+                    val fadeH = with(density) { 50.dp.toPx() }
+                    val startY = (seamPx - fadeH).coerceAtLeast(0f)
+                    val endY = seamPx.coerceAtLeast(startY + 1f)
+
+                    val maskBrush = if (blurSeamY <= 1.dp) {
+                        Brush.verticalGradient(
+                            0f to Color.Black,
+                            1f to Color.Black
                         )
-                    )
+                    } else {
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            (startY / totalH).coerceIn(0f, 1f) to Color.Transparent,
+                            (endY / totalH).coerceIn(0f, 1f) to Color.Black,
+                            1f to Color.Black
+                        )
+                    }
                     onDrawWithContent {
                         drawContent()
-                        drawRect(
-                            brush = blurMask,
-                            blendMode = BlendMode.DstIn,
-                        )
+                        drawRect(brush = maskBrush, blendMode = BlendMode.DstIn)
                     }
                 }
         )
 
-        // Dark Vignette Scrim Overlays for legibility
+        // Luminous Scrim Overlay (vibrant gradient without muddy dark overlays)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0f to Color.Black.copy(alpha = 0.35f),
-                            0.18f to Color.Transparent,
-                            0.46f to Color.Black.copy(alpha = 0.20f),
-                            0.64f to Color.Black.copy(alpha = 0.65f),
-                            0.82f to Color.Black.copy(alpha = 0.88f),
-                            1f to Color.Black.copy(alpha = 0.96f),
+                            0f to Color.Black.copy(alpha = lerpFloat(0.40f, 0.20f, lyricsProgress)),
+                            0.50f to Color.Black.copy(alpha = lerpFloat(0.55f, 0.35f, lyricsProgress)),
+                            1f to Color.Black.copy(alpha = lerpFloat(0.85f, 0.58f, lyricsProgress)),
                         )
                     )
                 )
         )
 
-        // ── Fullscreen Video (When in Video Mode & Fullscreen) ──
+        // Fullscreen Video (When in Video Mode & Fullscreen)
         if (isVideoMode && isVideoFullscreen) {
             val zoomMode = MusicPlayerState.videoFullscreenZoomMode
             val scaleVal by animateFloatAsState(
                 targetValue = when (zoomMode) {
-                    0 -> 1.0f // Fit (own resolution)
-                    1 -> 1.0f // Fill (zoom to cover)
-                    else -> 1.28f // Deep zoom (bounded so key elements remain visible)
+                    0 -> 1.0f
+                    1 -> 1.0f
+                    else -> 1.28f
                 },
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
                 label = "fullscreenZoomScale"
             )
             val bottomPaddingDp by animateDpAsState(
-                targetValue = if (zoomMode == 0) (titleBottomPadding + 8.dp).coerceAtLeast(0.dp) else 0.dp,
+                targetValue = if (zoomMode == 0) 60.dp else 0.dp,
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
                 label = "fullscreenBottomPadding"
             )
@@ -473,7 +588,6 @@ fun IosStyledPlayer(
                 )
             }
 
-            // In Zoom to Fill / Deep Zoom (zoomMode >= 1), add a subtle legibility scrim over the full-bleed video
             if (zoomMode >= 1) {
                 Box(
                     modifier = Modifier
@@ -493,50 +607,115 @@ fun IosStyledPlayer(
             }
         }
 
-        // ── Square Video Window (When in Video Mode, not fullscreen) ──
-        if (isVideoMode && !isVideoFullscreen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .padding(top = 58.dp, bottom = 270.dp, start = 20.dp, end = 20.dp),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(Color.Black)
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
+        // Top Drag Handle Pill '—'
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = statusBarTop + 10.dp)
+                .size(width = 38.dp, height = 4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Color.White.copy(alpha = 0.55f))
+        )
+
+        // Playing from caption
+        Text(
+            text = "Playing from ${track.artists.ifBlank { track.title }}",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White.copy(alpha = 0.70f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = statusBarTop + 20.dp, start = 48.dp, end = 48.dp)
+                .graphicsLayer {
+                    alpha = (1f - lyricsProgress * 2.5f).coerceIn(0f, 1f)
+                }
+        )
+
+        // Normal Collapse Chevron (fades out in lyrics mode)
+        IconButton(
+            onClick = onCollapse,
+            modifier = Modifier
+                .offset(x = 10.dp, y = statusBarTop + 4.dp)
+                .size(44.dp)
+                .graphicsLayer {
+                    alpha = (1f - lyricsProgress * 3f).coerceIn(0f, 1f)
+                },
+            enabled = lyricsProgress < 0.2f
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.KeyboardArrowDown,
+                contentDescription = "Collapse",
+                tint = Color.White.copy(alpha = 0.95f),
+                modifier = Modifier.size(34.dp)
+            )
+        }
+
+        // Top Song / Video Switch Pill (Always Centered, fades out in lyrics mode)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = statusBarTop + 38.dp)
+                .graphicsLayer {
+                    alpha = (1f - lyricsProgress * 2.5f).coerceIn(0f, 1f)
+                }
+        ) {
+            MusicVideoSwitchPill(
+                isVideoMode = isVideoMode,
+                onToggle = { toVideo ->
+                    if (lyricsProgress < 0.2f) {
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        MusicPlayerState.isVideoMode = toVideo
+                        if (!toVideo) {
+                            MusicPlayerState.isVideoFullscreen = false
+                            MusicPlayerState.videoFullscreenZoomMode = 0
+                        }
+                    }
+                }
+            )
+        }
+
+        // Unified Animated Avatar Card (Continuous morphing between normal card and corner thumbnail)
+        Box(
+            modifier = Modifier
+                .offset(x = currentArtX, y = currentArtY)
+                .size(currentArtSize)
+                .shadow(currentArtElevation, RoundedCornerShape(currentArtCorner))
+                .clip(RoundedCornerShape(currentArtCorner))
+                .background(Color.Black.copy(alpha = 0.25f))
+                .then(
+                    if (lyricsProgress > 0.8f) {
+                        Modifier.clickable {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            MusicPlayerState.lyricsOpen = false
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            if (isVideoMode && !isVideoFullscreen && lyricsProgress < 0.5f) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    AndroidView(
+                        factory = { ctx ->
+                            TextureView(ctx).apply {
+                                videoPlayer.setVideoTextureView(this)
+                            }
+                        },
+                        update = {
+                            videoPlayer.setVideoTextureView(it)
+                        },
                         modifier = Modifier
                             .fillMaxSize()
-                            .clipToBounds(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                TextureView(ctx).apply {
-                                    videoPlayer.setVideoTextureView(this)
-                                }
-                            },
-                            update = {
-                                videoPlayer.setVideoTextureView(it)
-                            },
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .aspectFit(videoAspect, cover = true)
-                        )
-                    }
+                            .aspectFit(videoAspect, cover = true)
+                    )
 
                     if (isVideoLoading) {
                         CircularProgressIndicator(
                             color = Color.White,
                             strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(36.dp).align(Alignment.Center)
                         )
                     }
 
@@ -547,7 +726,7 @@ fun IosStyledPlayer(
                         onClick = { showQualitySheet = true },
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(10.dp)
+                            .padding(8.dp)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -557,7 +736,7 @@ fun IosStyledPlayer(
                                 imageVector = Icons.Rounded.HighQuality,
                                 contentDescription = "Quality",
                                 tint = Color.White,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
@@ -581,116 +760,163 @@ fun IosStyledPlayer(
                         },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(10.dp)
-                            .size(38.dp)
+                            .padding(8.dp)
+                            .size(36.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                             Icon(
                                 imageVector = Icons.Rounded.Fullscreen,
                                 contentDescription = "Fullscreen",
                                 tint = Color.White,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
                 }
-            }
-        }
-
-        // ── 2. Top Navigation Bar (Collapse Chevron, Centered Switch Pill, More Menu) ──
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-        ) {
-            IconButton(
-                onClick = onCollapse,
-                modifier = Modifier
-                    .size(44.dp)
-                    .align(Alignment.CenterStart)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = "Collapse",
-                    tint = Color.White.copy(alpha = 0.95f),
-                    modifier = Modifier.size(36.dp)
+            } else {
+                AsyncImage(
+                    model = track.thumbnailUrl?.highQualityThumbnail(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
+        }
 
-            // Top Song / Video Switch Pill (Always Centered)
-            MusicVideoSwitchPill(
-                isVideoMode = isVideoMode,
-                onToggle = { toVideo ->
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    MusicPlayerState.isVideoMode = toVideo
-                    if (!toVideo) {
-                        MusicPlayerState.isVideoFullscreen = false
-                        MusicPlayerState.videoFullscreenZoomMode = 0
-                    }
-                },
-                modifier = Modifier.align(Alignment.Center)
+        // Unified Title and Artist Column (morphs smoothly between normal position and header beside avatar)
+        Column(
+            modifier = Modifier
+                .offset(x = currentTitleX, y = currentTitleY)
+                .width(currentTitleWidth)
+                .graphicsLayer {
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    scaleX = titleScale
+                    scaleY = titleScale
+                }
+        ) {
+            Text(
+                text = track.title,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 22.sp,
+                    lineHeight = 26.sp
+                ),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee()
             )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = track.artists,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp
+                ),
+                color = Color.White.copy(alpha = 0.70f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee()
+            )
+        }
 
+        // 3-Dots More Options Button (morphs between normal position below avatar and header position)
+        Box(
+            modifier = Modifier
+                .offset(x = currentMoreX, y = currentMoreY)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.12f))
+                .clickable {
+                    onLyricsInteraction()
+                    optionsOpen = true
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                painter = painterResource(R.drawable.more_horiz),
+                contentDescription = "More Options",
+                colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.92f)),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+
+        // Lyric One-Liner Preview
+        if (lyricsProgress < 0.99f) {
+            val teaserLyric = remember(MusicPlayerState.lyrics, position) {
+                val currentLine = MusicPlayerState.lyrics.lastOrNull { it.timeMs <= position }
+                currentLine?.text?.ifBlank { null }
+                    ?: MusicPlayerState.lyrics.firstOrNull { it.text.isNotBlank() }?.text
+                    ?: "Lyrics"
+            }
             Row(
-                modifier = Modifier.align(Alignment.CenterEnd),
+                modifier = Modifier
+                    .offset(x = 24.dp, y = normalTitleY + 54.dp)
+                    .width(maxWidthDp - 48.dp)
+                    .graphicsLayer {
+                        alpha = (1f - lyricsProgress * 3f).coerceIn(0f, 1f)
+                    }
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        MusicPlayerState.lyricsOpen = true
+                    }
+                    .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isVideoMode && isVideoFullscreen) {
-                    IconButton(
-                        onClick = {
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            when (MusicPlayerState.videoFullscreenZoomMode) {
-                                0 -> {
-                                    MusicPlayerState.videoFullscreenZoomMode = 1
-                                    zoomFeedbackText = "Zoom to Fill"
-                                }
-                                1 -> {
-                                    MusicPlayerState.videoFullscreenZoomMode = 2
-                                    zoomFeedbackText = "Zoom 1.3×"
-                                }
-                                else -> {
-                                    MusicPlayerState.videoFullscreenZoomMode = 0
-                                    MusicPlayerState.isVideoFullscreen = false
-                                    zoomFeedbackText = "Square Mode"
-                                }
-                            }
-                        },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        val icon = when (MusicPlayerState.videoFullscreenZoomMode) {
-                            0 -> Icons.Rounded.ZoomOutMap
-                            1 -> Icons.Rounded.ZoomIn
-                            else -> Icons.Rounded.FullscreenExit
-                        }
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = when (MusicPlayerState.videoFullscreenZoomMode) {
-                                0 -> "Zoom to Fill"
-                                1 -> "Deep Zoom"
-                                else -> "Return to Square"
-                            },
-                            tint = Color.White.copy(alpha = 0.95f),
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = { optionsOpen = true },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.more_horiz),
-                        contentDescription = "More Options",
-                        colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.92f)),
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                Text(
+                    text = teaserLyric,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.82f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "›",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.60f)
+                )
             }
         }
 
-        // ── Zoom Mode Feedback Pill ──
+        // In-Player Synced Lyrics Screen
+        if (lyricsProgress > 0.001f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = statusBarTop + 68.dp)
+                    .padding(bottom = lyricsBottomPadding)
+                    .graphicsLayer {
+                        alpha = lyricsProgress
+                    }
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {
+                        onLyricsInteraction()
+                    }
+            ) {
+                AirBeatsLyricsV2Content(
+                    lyrics = MusicPlayerState.lyrics,
+                    sliderPositionProvider = { if (isSeeking) seekPosition else null },
+                    onSeek = { seekPos ->
+                        onLyricsInteraction()
+                        MusicPlayerState.seekTo(seekPos)
+                        if (isVideoMode) {
+                            videoPlayer.seekTo(seekPos)
+                        }
+                    },
+                    onUserInteraction = onLyricsInteraction,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // Zoom Mode Feedback Pill
         AnimatedVisibility(
             visible = zoomFeedbackText != null,
             enter = fadeIn(tween(150)) + slideInVertically(tween(150)) { -it / 2 },
@@ -716,7 +942,7 @@ fun IosStyledPlayer(
             }
         }
 
-        // ── Fast Forward 2× Pill Indicator ──
+        // Fast Forward 2× Pill Indicator
         FastHoldPill(
             shown = MusicPlayerState.holdingFast,
             fullscreen = isVideoMode && isVideoFullscreen,
@@ -726,114 +952,75 @@ fun IosStyledPlayer(
                 .padding(top = 58.dp)
         )
 
-        // ── 3. Bottom Controls Anchored Column ──
+        // Bottom Controls Anchored Column
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 18.dp),
+                .padding(bottom = 18.dp)
+                .graphicsLayer {
+                    translationY = controlsTranslationY
+                    alpha = controlsAlpha
+                },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Keep the actions fixed in their existing row.  The metadata sits just above it,
-            // spanning the screen so a long title is not squeezed beside four buttons.
-            Box(
+            // Action buttons row (Like, Dislike, Comment, Share)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(42.dp)
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // The action row is intentionally only 42 dp tall.  Let metadata use
-                        // its real two-line height instead of measuring it into that row and
-                        // clipping the artist's descenders.
-                        .wrapContentHeight(unbounded = true)
-                        .padding(end = 4.dp)
-                        .align(Alignment.TopStart)
-                        // Sit just above the button row with tight breathing space, avoiding the high floating gap.
-                        .graphicsLayer { translationY = -50.dp.toPx() }
-                        .onGloballyPositioned { coords ->
-                            val root = rootBoxCoords
-                            if (root != null && root.isAttached && coords.isAttached) {
-                                val pos = root.localPositionOf(coords, Offset.Zero)
-                                val titleVisualTop = pos.y - with(density) { 50.dp.toPx() }
-                                val bottomPx = (root.size.height - titleVisualTop).coerceAtLeast(0f)
-                                if (bottomPx > 0f) {
-                                    titleBottomPadding = with(density) { bottomPx.toDp() }.coerceAtLeast(0.dp)
-                                }
-                            }
+                // 1. Like
+                ImmersiveCircleActionButton(
+                    icon = if (isLiked) R.drawable.yt_fill_experimental_thumb_up_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_up_vd_theme_24,
+                    isActive = isLiked,
+                    contentDescription = "Like",
+                    onClick = {
+                        onLyricsInteraction()
+                        MusicPlayerState.toggleLike()
+                    }
+                )
+
+                // 2. Dislike
+                ImmersiveCircleActionButton(
+                    icon = if (isDisliked) R.drawable.yt_fill_experimental_thumb_down_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_down_vd_theme_24,
+                    isActive = isDisliked,
+                    contentDescription = "Dislike",
+                    onClick = {
+                        onLyricsInteraction()
+                        isDisliked = !isDisliked
+                    }
+                )
+
+                // 3. Comment
+                ImmersiveCircleActionButton(
+                    icon = R.drawable.ic_comment,
+                    isActive = commentsOpen,
+                    contentDescription = "Comments",
+                    onClick = {
+                        onLyricsInteraction()
+                        commentsOpen = true
+                    }
+                )
+
+                // 4. Share
+                ImmersiveCircleActionButton(
+                    icon = R.drawable.ic_share,
+                    isActive = false,
+                    contentDescription = "Share",
+                    onClick = {
+                        onLyricsInteraction()
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.id}")
+                            type = "text/plain"
                         }
-                ) {
-                    Text(
-                        text = track.title,
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 24.sp,
-                            lineHeight = 28.sp,
-                            letterSpacing = (-0.2).sp
-                        ),
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee()
-                    )
-                    Spacer(Modifier.height(1.dp))
-                    Text(
-                        text = track.artists,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
-                        color = Color.White.copy(alpha = 0.72f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee()
-                    )
-                }
-
-                // The buttons deliberately retain their size and on-screen position.
-                Row(
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 1. Like
-                    ImmersiveCircleActionButton(
-                        icon = if (isLiked) R.drawable.yt_fill_experimental_thumb_up_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_up_vd_theme_24,
-                        isActive = isLiked,
-                        contentDescription = "Like",
-                        onClick = { MusicPlayerState.toggleLike() }
-                    )
-
-                    // 2. Dislike / Unlike
-                    ImmersiveCircleActionButton(
-                        icon = if (isDisliked) R.drawable.yt_fill_experimental_thumb_down_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_down_vd_theme_24,
-                        isActive = isDisliked,
-                        contentDescription = "Dislike",
-                        onClick = { isDisliked = !isDisliked }
-                    )
-
-                    // 3. Comment
-                    ImmersiveCircleActionButton(
-                        icon = R.drawable.ic_comment,
-                        isActive = commentsOpen,
-                        contentDescription = "Comments",
-                        onClick = { commentsOpen = true }
-                    )
-
-                    // 4. Share
-                    ImmersiveCircleActionButton(
-                        icon = R.drawable.ic_share,
-                        isActive = false,
-                        contentDescription = "Share",
-                        onClick = {
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.id}")
-                                type = "text/plain"
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share Music"))
-                        }
-                    )
-                }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Music"))
+                    }
+                )
             }
 
             Spacer(Modifier.height(28.dp))
@@ -842,6 +1029,7 @@ fun IosStyledPlayer(
             WavySlider(
                 value = displayPos.toFloat(),
                 onValueChange = {
+                    onLyricsInteraction()
                     isSeeking = true
                     seekPosition = it.toLong().coerceIn(0L, safeDuration)
                     if (isVideoMode) {
@@ -849,6 +1037,7 @@ fun IosStyledPlayer(
                     }
                 },
                 onValueChangeFinished = {
+                    onLyricsInteraction()
                     MusicPlayerState.seekTo(seekPosition)
                     if (isVideoMode) {
                         videoPlayer.seekTo(seekPosition)
@@ -884,7 +1073,10 @@ fun IosStyledPlayer(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color.White.copy(alpha = 0.12f))
-                        .clickable { optionsOpen = true }
+                        .clickable {
+                            onLyricsInteraction()
+                            optionsOpen = true
+                        }
                         .padding(horizontal = 12.dp, vertical = 5.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -923,7 +1115,10 @@ fun IosStyledPlayer(
             ) {
                 // Previous
                 IconButton(
-                    onClick = { MusicPlayerState.skipPrevious() },
+                    onClick = {
+                        onLyricsInteraction()
+                        MusicPlayerState.skipPrevious()
+                    },
                     modifier = Modifier.size(54.dp)
                 ) {
                     Image(
@@ -939,7 +1134,10 @@ fun IosStyledPlayer(
                     modifier = Modifier
                         .size(72.dp)
                         .clip(CircleShape)
-                        .clickable { MusicPlayerState.togglePlayPause() },
+                        .clickable {
+                            onLyricsInteraction()
+                            MusicPlayerState.togglePlayPause()
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     if (isLoading && !isPlaying) {
@@ -962,7 +1160,10 @@ fun IosStyledPlayer(
 
                 // Next
                 IconButton(
-                    onClick = { MusicPlayerState.skipNext() },
+                    onClick = {
+                        onLyricsInteraction()
+                        MusicPlayerState.skipNext()
+                    },
                     modifier = Modifier.size(54.dp)
                 ) {
                     Image(
@@ -992,7 +1193,10 @@ fun IosStyledPlayer(
                             .size(46.dp)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.12f))
-                            .clickable { MusicPlayerState.queueOpen = true },
+                            .clickable {
+                                onLyricsInteraction()
+                                MusicPlayerState.queueOpen = true
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
@@ -1008,14 +1212,21 @@ fun IosStyledPlayer(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .clickable { MusicPlayerState.lyricsOpen = true },
+                            .background(
+                                if (isLyricsOpen) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
+                            )
+                            .clickable {
+                                onLyricsInteraction()
+                                MusicPlayerState.lyricsOpen = !MusicPlayerState.lyricsOpen
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
                             painter = painterResource(R.drawable.lyrics),
                             contentDescription = "Lyrics",
-                            colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.90f)),
+                            colorFilter = ColorFilter.tint(
+                                if (isLyricsOpen) Color.White else Color.White.copy(alpha = 0.90f)
+                            ),
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -1028,6 +1239,7 @@ fun IosStyledPlayer(
                         .clip(RoundedCornerShape(22.dp))
                         .background(Color.White.copy(alpha = 0.14f))
                         .clickable {
+                            onLyricsInteraction()
                             val videoId = track.id
                             try {
                                 val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")).apply {

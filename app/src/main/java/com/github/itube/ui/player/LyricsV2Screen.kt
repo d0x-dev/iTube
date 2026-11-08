@@ -554,11 +554,12 @@ fun LyricsV2Screen(
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun AirBeatsLyricsV2Content(
+internal fun AirBeatsLyricsV2Content(
     lyrics: List<LyricsLine>,
     sliderPositionProvider: () -> Long?,
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    onUserInteraction: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -620,12 +621,13 @@ private fun AirBeatsLyricsV2Content(
     var lastManualScrollTime by remember { mutableLongStateOf(0L) }
 
     // Detect manual scrolling
-    val nestedScrollConnection = remember {
+    val nestedScrollConnection = remember(onUserInteraction) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (!isSelectionModeActive && source == NestedScrollSource.UserInput) {
                     isManualScrolling = true
                     lastManualScrollTime = System.currentTimeMillis()
+                    onUserInteraction()
                 }
                 return Offset.Zero
             }
@@ -769,6 +771,7 @@ private fun AirBeatsLyricsV2Content(
                         .combinedClickable(
                             enabled = true,
                             onClick = {
+                                onUserInteraction()
                                 if (isSelectionModeActive) {
                                     if (isSelected) {
                                         selectedIndices.remove(index)
