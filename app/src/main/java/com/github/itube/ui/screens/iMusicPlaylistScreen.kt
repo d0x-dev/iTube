@@ -354,8 +354,8 @@ fun iMusicPlaylistScreen(
                             modifier = Modifier.width(28.dp),
                             contentAlignment = Alignment.CenterStart,
                         ) {
-                            if (isPlaybackActive) {
-                                AnimatedEqualizer(isPlaying = true, color = c.primary, size = 16.dp)
+                            if (isPlayingThis) {
+                                AnimatedEqualizer(isPlaying = MusicPlayerState.isPlaying, color = c.primary, size = 16.dp)
                             } else {
                                 Text(
                                     text = "${index + 1}",

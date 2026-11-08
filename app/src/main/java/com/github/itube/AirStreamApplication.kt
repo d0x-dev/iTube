@@ -28,6 +28,7 @@ class AirStreamApplication : Application(), ImageLoaderFactory {
         ListeningProfile.init(this)
         MusicCacheManager.init(this)
         DownloadLibrary.init(this)
+        LikedSongsStore.init(this)
         SavedCollections.init(this)
         ResumeStore.init(this)
         SavedSession.init(this)

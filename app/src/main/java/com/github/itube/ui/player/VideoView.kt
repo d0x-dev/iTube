@@ -28,6 +28,14 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import coil.compose.AsyncImage
+import com.github.itube.LikeStatus
+import com.github.itube.shareLink
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -176,6 +184,10 @@ fun VideoContent(
     edge: EdgeScrub? = null,
 ) {
     val overlay = fullscreen || !PlayerControls.inBar
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var moreOpen by remember { mutableStateOf(false) }
+    var showDownload by remember { mutableStateOf(false) }
     // Hidden until the video is tapped: opening the player (from the mini-player too) and
     // rotating in or out of fullscreen never pop the controls up.
     var controlsVisible by remember { mutableStateOf(false) }
@@ -656,12 +668,180 @@ fun VideoContent(
                             trackHeight = 3.dp,
                             chapters = state.details?.chapters.orEmpty().map { it.startMs },
                         )
+
+                        Spacer(Modifier.height(4.dp))
+
+                        val like = state.accountState?.like ?: LikeStatus.None
+                        val nextThumb = state.queue.firstOrNull()?.thumbnail
+                            ?: state.details?.related?.firstOrNull()?.thumbnail
+                            ?: state.current?.thumbnail
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left-hand action buttons
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Like
+                                FullscreenActionButton(
+                                    icon = if (like == LikeStatus.Like) R.drawable.yt_fill_experimental_thumb_up_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_up_vd_theme_24,
+                                    contentDescription = if (like == LikeStatus.Like) "Unlike" else "Like",
+                                    onClick = {
+                                        touched()
+                                        state.setLike(LikeStatus.Like)
+                                    }
+                                )
+
+                                // Dislike
+                                FullscreenActionButton(
+                                    icon = if (like == LikeStatus.Dislike) R.drawable.yt_fill_experimental_thumb_down_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_down_vd_theme_24,
+                                    contentDescription = if (like == LikeStatus.Dislike) "Remove dislike" else "Dislike",
+                                    onClick = {
+                                        touched()
+                                        state.setLike(LikeStatus.Dislike)
+                                    }
+                                )
+
+                                // In Landscape fullscreen: show Comment button
+                                if (!isPortraitFullscreen) {
+                                    FullscreenActionButton(
+                                        icon = R.drawable.ic_comment,
+                                        contentDescription = "Comments",
+                                        onClick = {
+                                            touched()
+                                            state.sheet = PlayerSheet.Comments
+                                        }
+                                    )
+                                }
+
+                                // Share
+                                FullscreenActionButton(
+                                    icon = R.drawable.ic_share,
+                                    contentDescription = "Share",
+                                    onClick = {
+                                        touched()
+                                        state.current?.let { shareLink(context, "https://youtu.be/${it.id}", it.title) }
+                                    }
+                                )
+
+                                // 3-dot More
+                                FullscreenActionButton(
+                                    icon = R.drawable.ic_more_vert,
+                                    contentDescription = "More",
+                                    onClick = {
+                                        touched()
+                                        moreOpen = true
+                                    }
+                                )
+                            }
+
+                            // Right-hand next / more video pill
+                            if (isPortraitFullscreen) {
+                                // Portrait: Thumbnail only (no text), tapping exits fullscreen
+                                Box(
+                                    modifier = Modifier
+                                        .width(52.dp)
+                                        .height(28.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .border(1.5.dp, Color.White.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            touched()
+                                            onToggleFullscreen()
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (!nextThumb.isNullOrEmpty()) {
+                                        AsyncImage(
+                                            model = nextThumb,
+                                            contentDescription = "More videos",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            painter = painterResource(R.drawable.queue_music),
+                                            contentDescription = "More videos",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Landscape: "More videos" text + thumbnail capsule, tapping exits fullscreen
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .clickable {
+                                            touched()
+                                            onToggleFullscreen()
+                                        }
+                                        .padding(start = 6.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "More videos",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .width(52.dp)
+                                            .height(28.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .border(1.5.dp, Color.White.copy(alpha = 0.85f), RoundedCornerShape(14.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (!nextThumb.isNullOrEmpty()) {
+                                            AsyncImage(
+                                                model = nextThumb,
+                                                contentDescription = "More videos",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Icon(
+                                                painter = painterResource(R.drawable.queue_music),
+                                                contentDescription = "More videos",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 if (fullscreen) {
                     QualityDrop(state, drop == DropKind.Quality, dropAnchor, dropRoom, onClose = { drop = null })
                     SpeedDrop(state, drop == DropKind.Speed, dropAnchor, dropRoom, onClose = { drop = null })
                     CaptionsDrop(state, drop == DropKind.Captions, dropAnchor, dropRoom, onClose = { drop = null })
+                }
+                if (moreOpen) {
+                    PlayerMoreSheet(
+                        state = state,
+                        onDismiss = { moreOpen = false },
+                        onCopyLink = {
+                            state.current?.let { clipboard.setText(AnnotatedString("https://youtu.be/${it.id}")) }
+                            state.actionMessage = "Link copied"
+                            moreOpen = false
+                        },
+                        onDownload = {
+                            moreOpen = false
+                            showDownload = true
+                        }
+                    )
+                }
+                if (showDownload) {
+                    DownloadSheet(state, onDismiss = { showDownload = false })
                 }
             }
         }
@@ -845,6 +1025,29 @@ fun AudioOnlyStage(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun FullscreenActionButton(
+    icon: Int,
+    contentDescription: String,
+    tint: Color = Color.White,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 

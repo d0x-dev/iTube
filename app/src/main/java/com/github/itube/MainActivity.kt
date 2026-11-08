@@ -121,6 +121,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import com.github.itube.ui.screens.MusicScreen
 import com.github.itube.ui.screens.CachedMusicScreen
+import com.github.itube.ui.screens.LikedMusicScreen
 import com.github.itube.ui.screens.iMusicArtistScreen
 import com.github.itube.ui.screens.iMusicPlaylistScreen
 import com.github.itube.ui.screens.iMusicMoodsAndGenresScreen
@@ -243,6 +244,7 @@ fun AirStreamApp() {
     var openMusicPlaylist by remember { mutableStateOf<MusicPlaylistRef?>(null) }
     var openMoodsAndGenres by remember { mutableStateOf(false) }
     var cachedMusicOpen by remember { mutableStateOf(false) }
+    var likedMusicOpen by remember { mutableStateOf(false) }
     // Kept after closing so the page can slide out with its content.
     var channelState by remember { mutableStateOf<ChannelState?>(null) }
     var publicCollectionState by remember { mutableStateOf<PublicCollectionState?>(null) }
@@ -369,6 +371,7 @@ fun AirStreamApp() {
     BackHandler(enabled = !player.expanded && openMusicPlaylist != null) { openMusicPlaylist = null }
     BackHandler(enabled = !player.expanded && openMoodsAndGenres) { openMoodsAndGenres = false }
     BackHandler(enabled = !player.expanded && cachedMusicOpen) { cachedMusicOpen = false }
+    BackHandler(enabled = !player.expanded && likedMusicOpen) { likedMusicOpen = false }
     BackHandler(enabled = tab == Tab.Shorts && shorts.commentsOpen) { shorts.commentsOpen = false }
     // Registered last so it wins: in fullscreen, Back returns to the portrait player first.
     BackHandler(enabled = showFullscreen) { orientation.exitFullscreen() }
@@ -626,6 +629,7 @@ fun AirStreamApp() {
                     onOpenPlaylist = { openPlaylist = it },
                     onOpenDownloads = { downloadsOpen = true },
                     onOpenCachedMusic = { cachedMusicOpen = true },
+                    onOpenLikedMusic = { likedMusicOpen = true },
                     onOpenCollection = ::showPublicCollection,
                     onSignIn = { signingIn = true },
                     onAccount = { accountSheet = true },
@@ -819,6 +823,20 @@ fun AirStreamApp() {
             CachedMusicScreen(
                 contentPadding = contentPadding,
                 onBack = { cachedMusicOpen = false },
+                onOpenMusic = { track, queue ->
+                    MusicPlayerState.play(track, queue)
+                }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = likedMusicOpen,
+            enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
+            exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
+        ) {
+            LikedMusicScreen(
+                contentPadding = contentPadding,
+                onBack = { likedMusicOpen = false },
                 onOpenMusic = { track, queue ->
                     MusicPlayerState.play(track, queue)
                 }

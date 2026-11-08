@@ -61,8 +61,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.OfflinePin
 import com.github.itube.MusicCacheManager
+import com.github.itube.LikedSongsStore
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -386,6 +388,7 @@ fun LibraryScreen(
     onOpenPlaylist: (PlaylistRef) -> Unit,
     onOpenDownloads: () -> Unit,
     onOpenCachedMusic: () -> Unit = {},
+    onOpenLikedMusic: () -> Unit = {},
     onOpenCollection: (PublicCollection) -> Unit,
     onSignIn: () -> Unit,
     onAccount: () -> Unit,
@@ -471,21 +474,36 @@ fun LibraryScreen(
                 val cachedCount = MusicCacheManager.cachedTracks.size
                 val cachedBytes = MusicCacheManager.totalStorageBytes.longValue
                 val cachedSizeStr = MusicCacheManager.formatStorageSize(cachedBytes)
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PlaylistTile(
-                        PlaylistRef("DL", "Downloads", null, "${DownloadLibrary.entries.size} videos"),
-                        Modifier.weight(1f),
-                        onOpenDownloads,
-                    )
-                    CachedSongsTile(
-                        title = "Cached songs",
-                        subtitle = "$cachedCount songs • $cachedSizeStr",
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenCachedMusic
-                    )
+                val likedCount = LikedSongsStore.likedTracks.size
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        PlaylistTile(
+                            PlaylistRef("DL", "Downloads", null, "${DownloadLibrary.entries.size} videos"),
+                            Modifier.weight(1f),
+                            onOpenDownloads,
+                        )
+                        CachedSongsTile(
+                            title = "Cached songs",
+                            subtitle = "$cachedCount songs • $cachedSizeStr",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenCachedMusic
+                        )
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        LikedSongsTile(
+                            title = "Liked songs",
+                            subtitle = "$likedCount songs",
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenLikedMusic
+                        )
+                        Spacer(Modifier.weight(1f))
+                    }
                 }
             }
             if (SavedCollections.items.isNotEmpty()) {
@@ -580,6 +598,37 @@ private fun CachedSongsTile(title: String, subtitle: String, modifier: Modifier,
                 Icons.Rounded.OfflinePin,
                 contentDescription = null,
                 tint = contentColorFor(c.tertiaryContainer),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Column {
+            Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun LikedSongsTile(title: String, subtitle: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(26.dp)
+    Column(
+        modifier = modifier
+            .height(132.dp)
+            .pressable(pressedScale = 0.97f, onClick = onClick)
+            .clip(shape)
+            .background(c.surfaceContainerLow)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Box(
+            modifier = Modifier.size(52.dp).clip(CookieShape).background(Color(0xFFFF4565).copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Favorite,
+                contentDescription = null,
+                tint = Color(0xFFFF4565),
                 modifier = Modifier.size(24.dp)
             )
         }

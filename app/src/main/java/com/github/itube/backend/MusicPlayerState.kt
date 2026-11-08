@@ -262,7 +262,7 @@ object MusicPlayerState : Player.Listener {
         hasRecorded30sProgress = false
         hasConfirmedCurrentTrack = false
 
-        val isLiked = ListeningProfile.isLiked(track.id)
+        val isLiked = LikedSongsStore.isLiked(track.id) || ListeningProfile.isLiked(track.id)
         val resolvedTrack = if (track.liked != isLiked) track.copy(liked = isLiked) else track
 
         // A new selection is a hard handoff: never let the previous song keep playing while
@@ -571,6 +571,11 @@ object MusicPlayerState : Player.Listener {
         val cur = currentTrack ?: return
         val newLiked = !cur.liked
         ListeningProfile.recordLike(cur, newLiked)
+        if (newLiked) {
+            LikedSongsStore.add(cur)
+        } else {
+            LikedSongsStore.remove(cur.id)
+        }
         val updated = cur.copy(liked = newLiked)
         currentTrack = updated
         val qIdx = queue.indexOfFirst { it.id == cur.id }

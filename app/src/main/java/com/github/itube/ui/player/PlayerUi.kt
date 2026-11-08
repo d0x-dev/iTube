@@ -1172,7 +1172,7 @@ private fun AccountActions(state: PlayerState) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlayerMoreSheet(
+internal fun PlayerMoreSheet(
     state: PlayerState,
     onDismiss: () -> Unit,
     onCopyLink: () -> Unit,

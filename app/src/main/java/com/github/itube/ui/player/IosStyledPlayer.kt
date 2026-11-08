@@ -41,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import androidx.compose.foundation.Image
 import com.github.itube.FastHoldPill
+import com.github.itube.ui.components.AnimatedEqualizer
 import com.github.itube.aspectFit
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.background
@@ -2330,12 +2331,11 @@ private fun InPlayerQueueContent(
 
                 Spacer(Modifier.width(10.dp))
 
-                // Equalizer Icon
-                Icon(
-                    imageVector = Icons.Rounded.GraphicEq,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
+                // Animated Equalizer Wave
+                AnimatedEqualizer(
+                    isPlaying = MusicPlayerState.isPlaying,
+                    color = Color.White,
+                    size = 20.dp
                 )
 
                 Spacer(Modifier.width(12.dp))

@@ -84,6 +84,7 @@ import com.github.itube.MusicPlaylistRef
 import com.github.itube.MusicTrack
 import com.github.itube.highQualityThumbnail
 import com.github.itube.pressable
+import com.github.itube.ui.components.AnimatedEqualizer
 import com.github.itube.ui.components.ModernPullToRefreshBox
 import com.github.itube.ui.components.MusicScreenSkeleton
 import com.github.itube.ui.components.flowArtistShape
@@ -292,7 +293,8 @@ fun MusicScreen(
                                                     modifier = Modifier
                                                         .size(44.dp)
                                                         .clip(RoundedCornerShape(8.dp))
-                                                        .background(c.surfaceContainerHighest)
+                                                        .background(c.surfaceContainerHighest),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
                                                     AsyncImage(
                                                         model = track.thumbnailUrl,
@@ -300,6 +302,18 @@ fun MusicScreen(
                                                         contentScale = ContentScale.Crop,
                                                         modifier = Modifier.fillMaxSize()
                                                     )
+                                                    if (MusicPlayerState.currentTrack?.id == track.id) {
+                                                        Box(
+                                                            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            AnimatedEqualizer(
+                                                                isPlaying = MusicPlayerState.isPlaying,
+                                                                color = Color.White,
+                                                                size = 20.dp
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                                 Spacer(Modifier.width(10.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
@@ -990,7 +1004,8 @@ private fun TrackCard(
             modifier = Modifier
                 .size(136.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(c.surfaceContainerHigh)
+                .background(c.surfaceContainerHigh),
+            contentAlignment = Alignment.Center
         ) {
             AsyncImage(
                 model = track.thumbnailUrl,
@@ -998,6 +1013,18 @@ private fun TrackCard(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+            if (MusicPlayerState.currentTrack?.id == track.id) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AnimatedEqualizer(
+                        isPlaying = MusicPlayerState.isPlaying,
+                        color = Color.White,
+                        size = 28.dp
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -1049,6 +1076,21 @@ private fun QuickPickRow(
                         .fillMaxSize()
                         .clip(RoundedCornerShape(10.dp))
                 )
+                if (MusicPlayerState.currentTrack?.id == track.id) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(alpha = 0.45f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AnimatedEqualizer(
+                            isPlaying = MusicPlayerState.isPlaying,
+                            color = Color.White,
+                            size = 22.dp
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -1114,6 +1156,21 @@ private fun RankedTrackRow(
                         .fillMaxSize()
                         .clip(RoundedCornerShape(10.dp))
                 )
+                if (MusicPlayerState.currentTrack?.id == track.id) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(alpha = 0.45f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AnimatedEqualizer(
+                            isPlaying = MusicPlayerState.isPlaying,
+                            color = Color.White,
+                            size = 22.dp
+                        )
+                    }
+                }
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
