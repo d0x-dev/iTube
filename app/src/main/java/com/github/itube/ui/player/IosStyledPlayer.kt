@@ -150,7 +150,7 @@ import kotlinx.coroutines.withContext
 fun IosStyledPlayer(
     modifier: Modifier = Modifier,
     onCollapse: () -> Unit = { MusicPlayerState.expanded = false },
-    onSwitchToVideo: ((VideoItem) -> Unit)? = null,
+    onSwitchToVideo: ((VideoItem, Long) -> Unit)? = null,
     onAddToPlaylist: ((VideoItem) -> Unit)? = null,
 ) {
     val track = MusicPlayerState.currentTrack ?: return
@@ -1023,8 +1023,9 @@ fun IosStyledPlayer(
                 onAddToPlaylist = onAddToPlaylist,
                 onSwitchToVideo = {
                     optionsOpen = false
+                    val pos = MusicPlayerState.positionMs
                     onCollapse()
-                    onSwitchToVideo?.invoke(track.asVideoItem())
+                    onSwitchToVideo?.invoke(track.asVideoItem(), pos)
                 }
             )
         }
@@ -1392,7 +1393,7 @@ private fun MusicTrack.asVideoItem(): VideoItem = VideoItem(
     id = id,
     title = title,
     channel = artists,
-    channelUrl = null,
+    channelUrl = artistId,
     thumbnail = thumbnailUrl,
     avatar = null,
     durationSec = durationSec,

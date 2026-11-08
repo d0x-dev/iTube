@@ -1030,6 +1030,11 @@ fun AirStreamApp() {
                         onCollapse = {
                             musicSheetState.collapseSoft()
                         },
+                        onSwitchToVideo = { videoItem, posMs ->
+                            musicSheetState.collapseSoft()
+                            MusicPlayerState.close()
+                            player.open(videoItem, expand = true, startPositionMs = posMs)
+                        },
                         onAddToPlaylist = player::openPlaylists,
                     )
                 }

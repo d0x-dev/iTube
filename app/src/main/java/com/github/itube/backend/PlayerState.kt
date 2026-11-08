@@ -170,10 +170,24 @@ class PlayerState(private val scope: CoroutineScope) {
     var queue by mutableStateOf<List<VideoItem>>(emptyList())
         private set
 
-    fun open(item: VideoItem, expand: Boolean = true) {
+    private var initialSeekPositionMs: Long? = null
+
+    fun open(item: VideoItem, expand: Boolean = true, startPositionMs: Long? = null) {
         onPlaybackStarted?.invoke()
         if (expand) expanded = true
-        if (current?.id == item.id && error == null) return
+        initialSeekPositionMs = startPositionMs
+        if (startPositionMs != null && item.durationSec > 0) {
+            ResumeStore.save(item.id, startPositionMs, item.durationSec * 1000L)
+        }
+        if (current?.id == item.id && error == null) {
+            if (startPositionMs != null) {
+                controller?.seekTo(startPositionMs)
+                controller?.play()
+            } else {
+                controller?.play()
+            }
+            return
+        }
         offlineVideoIds.remove(item.id)
         known[item.id] = item
         show(item, startPlayback = true)
@@ -368,7 +382,9 @@ class PlayerState(private val scope: CoroutineScope) {
     private fun startPlayback(item: VideoItem) {
         val player = controller ?: run { pendingStart = item; return }
         onPlaybackStarted?.invoke()
-        replaceCurrent(player, item, positionMs = ResumeStore.startPosition(item.id))
+        val pos = initialSeekPositionMs ?: ResumeStore.startPosition(item.id)
+        initialSeekPositionMs = null
+        replaceCurrent(player, item, positionMs = pos)
         player.play()
     }
 
