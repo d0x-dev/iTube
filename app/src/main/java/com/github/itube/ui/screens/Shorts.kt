@@ -2331,7 +2331,7 @@ private fun ShortPage(shorts: ShortsState, page: Int, overlayBottom: Dp) {
                     .aspectFit(aspect, cover = aspect < 0.7f)
                     .onGloballyPositioned { shorts.videoRects[page] = Rect(it.positionInRoot(), it.size.toSize()) },
             ) {
-                AsyncImage(model = item.thumbnail, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                AsyncImage(model = item.shortThumbnail, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 ShortVideo(shorts, page, Modifier.fillMaxSize())
             }
         }

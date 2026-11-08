@@ -33,7 +33,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -234,11 +237,22 @@ fun Modifier.prefetchOnPress(videoId: String): Modifier = pointerInput(videoId) 
 val LocalVideoMenu = staticCompositionLocalOf<(VideoItem) -> Unit> { {} }
 
 @Composable
-fun Thumbnail(url: String?, modifier: Modifier = Modifier, radius: Int = 22) {
+fun Thumbnail(
+    url: String?,
+    modifier: Modifier = Modifier,
+    radius: Int = 22,
+    fallbackUrl: String? = null,
+) {
+    var activeUrl by remember(url) { mutableStateOf(url) }
     AsyncImage(
-        model = url,
+        model = activeUrl,
         contentDescription = null,
         contentScale = ContentScale.Crop,
+        onError = {
+            if (fallbackUrl != null && activeUrl != fallbackUrl) {
+                activeUrl = fallbackUrl
+            }
+        },
         modifier = modifier
             .clip(RoundedCornerShape(radius.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),

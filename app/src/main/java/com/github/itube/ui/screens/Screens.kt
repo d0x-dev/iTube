@@ -226,11 +226,17 @@ private fun HomeShortsShelf(shorts: List<VideoItem>, shelfIndex: Int, onOpenShor
                 rowShorts.forEach { short ->
                     Box(
                         Modifier.weight(1f)
+                            .aspectRatio(9f / 16f)
                             .prefetchOnPress(short.id)
                             .pressable(pressedScale = 0.98f, onLongClick = { menu(short) }, onClick = { onOpenShort(short) })
                             .clip(RoundedCornerShape(16.dp)),
                     ) {
-                        Thumbnail(short.thumbnail, Modifier.fillMaxWidth().aspectRatio(0.68f), radius = 0)
+                        Thumbnail(
+                            url = short.shortThumbnail,
+                            modifier = Modifier.fillMaxSize(),
+                            radius = 0,
+                            fallbackUrl = short.thumbnail,
+                        )
                         Box(
                             Modifier.fillMaxSize().background(
                                 Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f)),
@@ -887,11 +893,18 @@ fun PlaylistScreen(
                     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         row.forEach { short ->
                             Box(
-                                Modifier.weight(1f).prefetchOnPress(short.id)
+                                Modifier.weight(1f)
+                                    .aspectRatio(9f / 16f)
+                                    .prefetchOnPress(short.id)
                                     .pressable(pressedScale = 0.98f, onLongClick = { videoMenu(short) }, onClick = { onOpenShort(short) })
                                     .clip(RoundedCornerShape(18.dp)),
                             ) {
-                                Thumbnail(short.thumbnail, Modifier.fillMaxWidth().aspectRatio(0.68f), radius = 0)
+                                Thumbnail(
+                                    url = short.shortThumbnail,
+                                    modifier = Modifier.fillMaxSize(),
+                                    radius = 0,
+                                    fallbackUrl = short.thumbnail,
+                                )
                                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.74f))))
                                 Text(short.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.align(Alignment.BottomStart).padding(10.dp))
@@ -1036,8 +1049,8 @@ private fun PlaylistShortsShelf(
             items(shorts, key = { "playlist-short-${it.id}" }) { short ->
                 Box(
                     Modifier
-                        .width(136.dp)
-                        .aspectRatio(0.64f)
+                        .width(140.dp)
+                        .aspectRatio(9f / 16f)
                         .prefetchOnPress(short.id)
                         .pressable(
                             pressedScale = 0.96f,
@@ -1047,7 +1060,12 @@ private fun PlaylistShortsShelf(
                         .clip(RoundedCornerShape(16.dp))
                         .background(c.surfaceContainerHigh),
                 ) {
-                    Thumbnail(short.thumbnail, Modifier.fillMaxSize(), radius = 0)
+                    Thumbnail(
+                        url = short.shortThumbnail,
+                        modifier = Modifier.fillMaxSize(),
+                        radius = 0,
+                        fallbackUrl = short.thumbnail,
+                    )
                     Box(
                         Modifier.fillMaxSize().background(
                             Brush.verticalGradient(
@@ -2165,11 +2183,17 @@ fun SearchShortsShelf(shorts: List<VideoItem>, onOpenShort: (VideoItem) -> Unit)
                 rowShorts.forEach { short ->
                     Box(
                         Modifier.weight(1f)
+                            .aspectRatio(9f / 16f)
                             .prefetchOnPress(short.id)
                             .pressable(pressedScale = 0.98f, onLongClick = { menu(short) }, onClick = { onOpenShort(short) })
                             .clip(RoundedCornerShape(16.dp)),
                     ) {
-                        Thumbnail(short.thumbnail, Modifier.fillMaxWidth().aspectRatio(0.68f), radius = 0)
+                        Thumbnail(
+                            url = short.shortThumbnail,
+                            modifier = Modifier.fillMaxSize(),
+                            radius = 0,
+                            fallbackUrl = short.thumbnail,
+                        )
                         Box(
                             Modifier.fillMaxSize().background(
                                 Brush.verticalGradient(0.42f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.78f)),

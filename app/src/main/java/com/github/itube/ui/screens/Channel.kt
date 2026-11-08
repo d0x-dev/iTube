@@ -365,7 +365,12 @@ private fun ChannelShortCard(short: VideoItem, onClick: () -> Unit) {
             .clip(RoundedCornerShape(14.dp))
             .pressable(pressedScale = 0.98f, onLongClick = { menu(short) }, onClick = onClick)
     ) {
-        Thumbnail(short.thumbnail, Modifier.fillMaxSize(), radius = 0)
+        Thumbnail(
+            url = short.shortThumbnail,
+            modifier = Modifier.fillMaxSize(),
+            radius = 0,
+            fallbackUrl = short.thumbnail,
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()

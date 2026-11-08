@@ -88,6 +88,7 @@ fun SleepTimerContent(
     isVideo: Boolean,
     onDismiss: () -> Unit,
     onSetMessage: ((String) -> Unit)? = null,
+    scrollable: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val c = MaterialTheme.colorScheme
@@ -96,10 +97,12 @@ fun SleepTimerContent(
     val isTimerActive = SleepTimerState.isTimerActive
     val mediaType = if (isVideo) "video" else "song"
 
+    val scrollModifier = if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .then(scrollModifier)
     ) {
         // Header
         Row(

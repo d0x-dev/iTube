@@ -425,25 +425,28 @@ fun IosStyledPlayer(
                 label = "fullscreenZoomScale"
             )
             val bottomPaddingDp by animateDpAsState(
-                targetValue = if (zoomMode == 0) titleBottomPadding + 8.dp else 0.dp,
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                targetValue = if (zoomMode == 0) (titleBottomPadding + 8.dp).coerceAtLeast(0.dp) else 0.dp,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
                 label = "fullscreenBottomPadding"
             )
             val topPaddingDp by animateDpAsState(
                 targetValue = if (zoomMode == 0) 58.dp else 0.dp,
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
                 label = "fullscreenTopPadding"
             )
             val verticalBias by animateFloatAsState(
                 targetValue = if (zoomMode == 0) 1.0f else 0.0f,
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
                 label = "fullscreenVerticalBias"
             )
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = topPaddingDp, bottom = bottomPaddingDp)
+                    .padding(
+                        top = topPaddingDp.coerceAtLeast(0.dp),
+                        bottom = bottomPaddingDp.coerceAtLeast(0.dp)
+                    )
                     .clipToBounds(),
                 contentAlignment = Alignment.Center
             ) {
@@ -756,9 +759,9 @@ fun IosStyledPlayer(
                             if (root != null && root.isAttached && coords.isAttached) {
                                 val pos = root.localPositionOf(coords, Offset.Zero)
                                 val titleVisualTop = pos.y - with(density) { 50.dp.toPx() }
-                                val bottomPx = root.size.height - titleVisualTop
+                                val bottomPx = (root.size.height - titleVisualTop).coerceAtLeast(0f)
                                 if (bottomPx > 0f) {
-                                    titleBottomPadding = with(density) { bottomPx.toDp() }
+                                    titleBottomPadding = with(density) { bottomPx.toDp() }.coerceAtLeast(0.dp)
                                 }
                             }
                         }
@@ -1288,6 +1291,7 @@ private fun MusicOptionsModal(
                 SleepTimerContent(
                     isVideo = false,
                     onDismiss = onDismiss,
+                    scrollable = false,
                     onSetMessage = { msg ->
                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     }
@@ -1478,11 +1482,11 @@ fun MusicVideoSwitchPill(
     val thumbWidth = 48.dp
     val thumbHeight = 32.dp
     val padding = 4.dp
-    val maxOffset = pillWidth - thumbWidth - padding
+    val maxOffset = (pillWidth - thumbWidth - padding).coerceAtLeast(0.dp)
 
     val thumbOffset by animateDpAsState(
         targetValue = if (isVideoMode) maxOffset else padding,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.82f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
         label = "pillThumb"
     )
 
@@ -1504,7 +1508,7 @@ fun MusicVideoSwitchPill(
         // Sliding Thumb
         Box(
             modifier = Modifier
-                .padding(start = thumbOffset)
+                .padding(start = thumbOffset.coerceAtLeast(0.dp))
                 .size(width = thumbWidth, height = thumbHeight)
                 .clip(RoundedCornerShape(thumbHeight / 2))
                 .background(Color.White.copy(alpha = 0.22f)),

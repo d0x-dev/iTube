@@ -320,7 +320,8 @@ object InnerTube {
                 if (vid.isNotBlank()) {
                     val title = obj.optJSONObject("overlayMetadata")?.optJSONObject("primaryText")?.optString("content").orEmpty()
                     val viewsStr = obj.optJSONObject("overlayMetadata")?.optJSONObject("secondaryText")?.optString("content").orEmpty()
-                    val thumb = obj.firstImageSource() ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                    val rawThumb = obj.thumbnails()?.lastOrNull() ?: obj.bestImageSource()
+                    val thumb = rawThumb?.let { upgradeThumbnail(it, vid) } ?: "https://i.ytimg.com/vi/$vid/oar2.jpg"
                     list += VideoItem(
                         id = vid,
                         title = title,
@@ -337,7 +338,8 @@ object InnerTube {
                 if (vid.isNotBlank()) {
                     val title = obj.text("headline") ?: obj.text("title") ?: ""
                     val viewsStr = obj.text("viewCountText") ?: ""
-                    val thumb = obj.firstImageSource() ?: "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                    val rawThumb = obj.thumbnails()?.lastOrNull() ?: obj.bestImageSource()
+                    val thumb = rawThumb?.let { upgradeThumbnail(it, vid) } ?: "https://i.ytimg.com/vi/$vid/oar2.jpg"
                     list += VideoItem(
                         id = vid,
                         title = title,
@@ -832,7 +834,7 @@ object InnerTube {
                 Log.i("AirStream", "shorts: blocked ad reel $id")
                 continue
             }
-            val frame = reel.optJSONObject("thumbnail")?.collectStrings("url")?.firstOrNull()
+            val frame = reel.optJSONObject("thumbnail")?.collectStrings("url")?.lastOrNull()
             videos.putIfAbsent(id, shortItem(id, frame))
         }
         val next = root.optJSONObject("continuationEndpoint")?.optJSONObject("continuationCommand")?.optString("token")?.ifBlank { null }
@@ -842,7 +844,7 @@ object InnerTube {
     /** A short before its details load: just its id and its first frame (9:16). */
     private fun shortItem(id: String, frame: String?) = VideoItem(
         id = id, title = "", channel = "", channelUrl = null,
-        thumbnail = frame ?: "https://i.ytimg.com/vi/$id/oar2.jpg",
+        thumbnail = frame?.let { upgradeThumbnail(it, id) } ?: "https://i.ytimg.com/vi/$id/oar2.jpg",
         avatar = null, durationSec = 0, views = 0, uploaded = null,
         isShort = true,
     )
@@ -1055,12 +1057,13 @@ object InnerTube {
         }
         if (id.isBlank()) return null
         val metadata = o.optJSONObject("overlayMetadata")
+        val rawThumb = o.thumbnails()?.lastOrNull()
+            ?: o.collectStrings("url").lastOrNull { it.contains("ytimg") || it.contains("googleusercontent") || it.contains("ggpht") }
         return VideoItem(
             id = id,
             title = metadata?.optJSONObject("primaryText")?.optString("content").orEmpty().ifBlank { "Short" },
             channel = "",
-            thumbnail = o.collectStrings("url").firstOrNull { it.contains("ytimg") || it.contains("googleusercontent") }
-                ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            thumbnail = rawThumb?.let { upgradeThumbnail(it, id) } ?: "https://i.ytimg.com/vi/$id/oar2.jpg",
             durationSec = 0L,
             views = parseViews(metadata?.optJSONObject("secondaryText")?.optString("content")),
             uploaded = null,
@@ -1070,12 +1073,13 @@ object InnerTube {
 
     private fun parseReelItem(o: JSONObject): VideoItem? {
         val id = o.optString("videoId").ifBlank { return null }
+        val rawThumb = o.thumbnails()?.lastOrNull()
+            ?: o.collectStrings("url").lastOrNull { it.contains("ytimg") || it.contains("googleusercontent") || it.contains("ggpht") }
         return VideoItem(
             id = id,
             title = o.text("headline") ?: o.text("title") ?: "Short",
             channel = o.text("shortBylineText") ?: "",
-            thumbnail = o.collectStrings("url").firstOrNull { it.contains("ytimg") || it.contains("googleusercontent") }
-                ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            thumbnail = rawThumb?.let { upgradeThumbnail(it, id) } ?: "https://i.ytimg.com/vi/$id/oar2.jpg",
             durationSec = 0L,
             views = parseViews(o.text("viewCountText")),
             uploaded = null,
@@ -1137,7 +1141,7 @@ object InnerTube {
             title = o.text("title") ?: return null,
             channel = channelRun?.optString("text").orEmpty(),
             channelUrl = channelId?.takeIf { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
-            thumbnail = "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            thumbnail = if (isShort) "https://i.ytimg.com/vi/$id/oar2.jpg" else (o.thumbnails()?.lastOrNull() ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg"),
             avatar = avatar?.let(::absoluteUrl),
             durationSec = durSec,
             views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") }),
@@ -1168,7 +1172,7 @@ object InnerTube {
             title = title,
             channel = parts.firstOrNull { !it.contains("view") && !it.contains("ago") }.orEmpty(),
             channelUrl = o.collectStrings("browseId").firstOrNull { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
-            thumbnail = "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            thumbnail = if (isShort) "https://i.ytimg.com/vi/$id/oar2.jpg" else (o.thumbnails()?.lastOrNull() ?: "https://i.ytimg.com/vi/$id/hqdefault.jpg"),
             avatar = avatar?.let(::absoluteUrl),
             durationSec = durSec,
             views = parseViews(parts.firstOrNull { it.contains("view") }),
@@ -1265,6 +1269,20 @@ internal fun JSONObject.thumbnails(): List<String>? {
 }
 
 private fun JSONObject.firstImageSource(): String? = collectStrings("url").firstOrNull { it.contains("ytimg") || it.contains("ggpht") }
+
+internal fun JSONObject.bestImageSource(): String? =
+    collectStrings("url").lastOrNull { it.contains("ytimg") || it.contains("ggpht") || it.contains("googleusercontent") }
+
+internal fun upgradeThumbnail(url: String, id: String): String {
+    if (url.contains("i.ytimg.com/vi/") || url.contains("img.youtube.com/vi/")) {
+        return "https://i.ytimg.com/vi/$id/oar2.jpg"
+    }
+    if (url.contains("googleusercontent.com") || url.contains("ggpht.com")) {
+        return url.replace(Regex("=w\\d+-h\\d+[^\"&]*"), "=w720-h1280")
+            .replace(Regex("=s\\d+[^\"&]*"), "=s1280")
+    }
+    return url
+}
 
 /** Every string value stored under [field] anywhere below this object. */
 internal fun JSONObject.collectStrings(field: String): List<String> {

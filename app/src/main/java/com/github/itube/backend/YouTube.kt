@@ -66,6 +66,19 @@ data class VideoItem(
 ) {
     val isShortVideo: Boolean
         get() = isShort || (durationSec in 1..60)
+
+    val shortThumbnail: String
+        get() {
+            if (id.isNotBlank()) {
+                val thumb = thumbnail.orEmpty()
+                if (thumb.contains("googleusercontent.com") || thumb.contains("ggpht.com")) {
+                    return thumb.replace(Regex("=w\\d+-h\\d+[^\"&]*"), "=w720-h1280")
+                        .replace(Regex("=s\\d+[^\"&]*"), "=s1280")
+                }
+                return "https://i.ytimg.com/vi/$id/oar2.jpg"
+            }
+            return thumbnail.orEmpty()
+        }
 }
 
 /** A YouTube search row. Unlike [VideoItem], this also represents channels and playlists. */
@@ -476,12 +489,14 @@ object YouTube {
                 (duration in 1..60) ||
                 name.contains("#shorts", ignoreCase = true) ||
                 name.contains("#short", ignoreCase = true)
+        val rawThumb = thumbnails.bestUrl()
+        val thumbUrl = if (isShort) "https://i.ytimg.com/vi/$id/oar2.jpg" else rawThumb
         return VideoItem(
             id = id,
             title = name,
             channel = uploaderName.orEmpty(),
             channelUrl = uploaderUrl,
-            thumbnail = thumbnails.bestUrl(),
+            thumbnail = thumbUrl,
             avatar = uploaderAvatars.bestUrl(targetWidth = 96),
             durationSec = duration,
             views = viewCount,
