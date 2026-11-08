@@ -389,7 +389,7 @@ private fun AboutITube() {
         }
         release?.let {
             Spacer(Modifier.height(14.dp))
-            Text("Version ${it.version} is ready to install.", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("Version ${it.version} is available on GitHub.", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(Modifier.height(10.dp))
             PillButton("View release notes", { showNotes = true })
         }

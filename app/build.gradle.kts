@@ -14,8 +14,17 @@ android {
         applicationId = "com.github.itube"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
     }
 
     buildTypes {
@@ -30,9 +39,6 @@ android {
             // Sideloaded personal build: the debug key is fine until there's a reason
             // to distribute it.
             signingConfig = signingConfigs.getByName("debug")
-            // ML Kit's translator (captions) is the app's only native code, ~16 MB per CPU type: phones only
-            // (64- and 32-bit ARM). Debug keeps x86 for the emulator.
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -58,19 +64,23 @@ android {
     }
 }
 
-// Keep the standard assemble tasks, and also emit a consistently named APK for sharing.
+// Keep the standard assemble tasks, and also emit consistently named APKs for sharing.
 afterEvaluate {
     val copyDebugApk = tasks.register("copyDebugApkAsITube") {
         dependsOn("packageDebug")
-        // Finalizers run even when an earlier assemble task fails.  In that case Android has
-        // not produced an APK, so let Gradle report the original failure instead of masking it
-        // with a missing-file exception from this convenience copy task.
-        onlyIf {
-            layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile.isFile
-        }
         doLast {
-            val apk = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
-            apk.copyTo(File(apk.parentFile, "iTube.apk"), overwrite = true)
+            val dir = layout.buildDirectory.dir("outputs/apk/debug").get().asFile
+            if (dir.exists()) {
+                dir.listFiles { _, name -> name.endsWith(".apk") && !name.startsWith("iTube") }?.forEach { apk ->
+                    val cleanName = apk.name
+                        .replace("app-", "iTube-")
+                        .replace("-debug", "")
+                    apk.copyTo(File(dir, cleanName), overwrite = true)
+                    if (apk.name.contains("universal") || apk.name == "app-debug.apk") {
+                        apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
+                    }
+                }
+            }
         }
     }
     tasks.named("assembleDebug") {
@@ -79,12 +89,25 @@ afterEvaluate {
 
     val copyReleaseApk = tasks.register("copyReleaseApkAsITube") {
         dependsOn("packageRelease")
-        onlyIf {
-            layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile.isFile
-        }
         doLast {
-            val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
-            apk.copyTo(File(apk.parentFile, "iTube.apk"), overwrite = true)
+            val dir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+            val targetDir = project.file("release")
+            targetDir.mkdirs()
+            if (dir.exists()) {
+                dir.listFiles { _, name -> name.endsWith(".apk") && !name.startsWith("iTube") }?.forEach { apk ->
+                    val cleanName = apk.name
+                        .replace("app-", "iTube-")
+                        .replace("-release", "")
+                    apk.copyTo(File(dir, cleanName), overwrite = true)
+                    apk.copyTo(File(targetDir, cleanName), overwrite = true)
+                    apk.copyTo(File(targetDir, apk.name), overwrite = true)
+                    if (apk.name.contains("universal") || apk.name == "app-release.apk") {
+                        apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
+                        apk.copyTo(File(targetDir, "iTube.apk"), overwrite = true)
+                        apk.copyTo(File(targetDir, "app-release.apk"), overwrite = true)
+                    }
+                }
+            }
         }
     }
     tasks.named("assembleRelease") {

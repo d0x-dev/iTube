@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -111,6 +112,7 @@ object AppUpdate {
         val apkUrl: String,
         val size: Long,
         val sha256: String?,
+        val releaseUrl: String = apkUrl,
         /** Newest first: this release's notes and those of the releases between it and this build. */
         val notes: List<ReleaseNotes> = emptyList(),
     )
@@ -214,37 +216,19 @@ object AppUpdate {
         }
     }
 
-    /** Opens the versioned APK directly from the GitHub release. */
+    /** Opens the GitHub release page directly in the browser so the user can download their architecture APK. */
     fun openDownload(context: Context) {
         val release = available ?: return
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(release.apkUrl))
+        val targetUrl = release.releaseUrl.ifBlank { release.apkUrl }
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { context.startActivity(intent) }
-            .onFailure { Log.w(TAG, "update: couldn't open APK link", it) }
+            .onFailure { Log.w(TAG, "update: couldn't open release link", it) }
     }
 
-    /** The What's new sheet's Update button. */
+    /** The What's new sheet's Update button redirects directly to the GitHub release page. */
     fun install(context: Context) {
-        val release = available ?: return
-        if (phase == Phase.Downloading || phase == Phase.Installing) return
-        if (!app.packageManager.canRequestPackageInstalls()) {
-            awaitingPermission = true
-            context.startActivity(
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-            return
-        }
-        phase = Phase.Downloading
-        scope.launch {
-            val apk = apkFor(release).await()
-            if (apk == null) { phase = Phase.Failed; return@launch }
-            phase = Phase.Installing
-            runCatching { withContext(Dispatchers.IO) { commit(apk, release) } }.onFailure {
-                Log.w(TAG, "update: couldn't start the install", it)
-                phase = Phase.Failed
-            }
-        }
+        openDownload(context)
     }
 
     /** Back from "Install unknown apps": install if it was allowed, else the button waits again. */
@@ -336,19 +320,22 @@ object AppUpdate {
         return ReleaseIndex(latest.copy(notes = notes), history)
     }
 
-    /** Latest release JSON → matching APK asset, or the documented direct URL if the APK is still uploading. */
+    /** Latest release JSON → version and release page URL. */
     internal fun parseRelease(json: JSONObject): Release? {
         val tag = json.optString("tag_name").ifBlank { return null }
-        val version = tag.removePrefix("v")
+        val version = tag.removePrefix("v").substringBefore('-')
+        val htmlUrl = json.optString("html_url").ifBlank { "https://github.com/d0x-dev/iTube/releases/tag/$tag" }
         val assets = json.optJSONArray("assets") ?: JSONArray()
         val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == releaseAssetName(version) }
-        val directUrl = "https://github.com/d0x-dev/iTube/releases/download/${Uri.encode(tag)}/${Uri.encode(releaseAssetName(version))}"
+            .firstOrNull { it.optString("name").endsWith(".apk") }
+        val directUrl = apk?.optString("browser_download_url")?.ifBlank { null }
+            ?: "https://github.com/d0x-dev/iTube/releases/download/${Uri.encode(tag)}/${Uri.encode(releaseAssetName(version))}"
         return Release(
             version = version,
-            apkUrl = apk?.optString("browser_download_url")?.ifBlank { null } ?: directUrl,
+            apkUrl = directUrl,
             size = apk?.optLong("size") ?: 0L,
             sha256 = apk?.optString("digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
+            releaseUrl = htmlUrl,
             notes = listOf(ReleaseNotes(version, json.optString("body"))),
         )
     }
@@ -500,8 +487,12 @@ object AppUpdate {
             val o = JSONObject(it)
             val notes = o.optJSONArray("notes") ?: JSONArray()
             Release(
-                o.getString("version"), o.getString("url"), o.getLong("size"), o.optString("sha256").ifBlank { null },
-                (0 until notes.length()).map { notes.getJSONObject(it).let { n -> ReleaseNotes(n.getString("version"), n.getString("body")) } },
+                version = o.getString("version"),
+                apkUrl = o.getString("url"),
+                size = o.getLong("size"),
+                sha256 = o.optString("sha256").ifBlank { null },
+                releaseUrl = o.optString("releaseUrl").ifBlank { o.getString("url") },
+                notes = (0 until notes.length()).map { notes.getJSONObject(it).let { n -> ReleaseNotes(n.getString("version"), n.getString("body")) } },
             )
         }.getOrNull()
     }
@@ -519,6 +510,7 @@ object AppUpdate {
 
     private fun Release.toJson() =
         JSONObject().put("version", version).put("url", apkUrl).put("size", size).put("sha256", sha256 ?: "")
+            .put("releaseUrl", releaseUrl)
             .put("notes", JSONArray(notes.map { JSONObject().put("version", it.version).put("body", it.body) }))
             .toString()
 
@@ -695,14 +687,25 @@ private fun ReleaseNotesSheet(
                     .background(c.primary),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    "Download APK",
-                    color = c.onPrimary,
-                    fontFamily = RoundedHeavy,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 16.sp,
-                    maxLines = 1,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        Icons.Rounded.Download,
+                        contentDescription = null,
+                        tint = c.onPrimary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        "Download on GitHub",
+                        color = c.onPrimary,
+                        fontFamily = RoundedHeavy,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                    )
+                }
             }
         }
         Spacer(Modifier.height(24.dp))

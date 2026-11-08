@@ -72,10 +72,10 @@ data class VideoItem(
             if (id.isNotBlank()) {
                 val thumb = thumbnail.orEmpty()
                 if (thumb.contains("googleusercontent.com") || thumb.contains("ggpht.com")) {
-                    return thumb.replace(Regex("=w\\d+-h\\d+[^\"&]*"), "=w720-h1280")
-                        .replace(Regex("=s\\d+[^\"&]*"), "=s1280")
+                    return thumb.replace(Regex("=w\\d+-h\\d+[^\"&]*"), "=w720-h1280-p-k-no-nu")
+                        .replace(Regex("=s\\d+[^\"&]*"), "=w720-h1280-p-k-no-nu")
                 }
-                return "https://i.ytimg.com/vi/$id/oar2.jpg"
+                return "https://i.ytimg.com/vi/$id/frame0.jpg"
             }
             return thumbnail.orEmpty()
         }

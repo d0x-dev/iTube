@@ -16,3 +16,8 @@ keystore.properties
 .idea/
 *.iml
 .DS_Store
+
+# Build artifacts & split APKs
+app/release/app-*-release.apk
+app/release/iTube*.apk
+release_notes_*.md
