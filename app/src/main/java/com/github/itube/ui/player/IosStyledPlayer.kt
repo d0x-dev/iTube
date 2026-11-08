@@ -1295,209 +1295,103 @@ fun IosStyledPlayer(
 
             Spacer(Modifier.height(28.dp))
 
-            // ── Bottom Action Controls (Queue, Lyrics, YouTube Pill / Shuffle & Repeat Capsule) ──
-            if (isQueueOpen) {
-                // Queue Mode Bottom Bar: Lyrics on left, Capsule (Shuffle, Repeat, AutoPlay) in center, Queue on right
+            // ── Bottom Action Controls (Queue, Lyrics, YouTube Pill) ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 1. Lyrics Button (Unselected, clicking switches to lyrics)
+                    // Queue Button
                     Box(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
+                            .background(
+                                if (isQueueOpen) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
+                            )
                             .clickable {
-                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                MusicPlayerState.queueOpen = false
-                                MusicPlayerState.lyricsOpen = true
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.lyrics),
-                            contentDescription = "Lyrics",
-                            colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.90f)),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    // 2. Center Capsule Pill (Shuffle, Repeat, AutoPlay)
-                    Surface(
-                        shape = RoundedCornerShape(23.dp),
-                        color = Color.White.copy(alpha = 0.16f),
-                        modifier = Modifier.height(46.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            // Shuffle
-                            IconButton(
-                                onClick = {
-                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                    MusicPlayerState.toggleShuffle()
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Shuffle,
-                                    contentDescription = "Shuffle",
-                                    tint = if (MusicPlayerState.shuffleEnabled) Color.White else Color.White.copy(alpha = 0.45f),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-
-                            // Repeat
-                            IconButton(
-                                onClick = {
-                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                    MusicPlayerState.toggleRepeat()
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (MusicPlayerState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                                    contentDescription = "Repeat",
-                                    tint = if (MusicPlayerState.repeatMode != Player.REPEAT_MODE_OFF) Color.White else Color.White.copy(alpha = 0.45f),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-
-                            // AutoPlay / Infinity
-                            IconButton(
-                                onClick = {
-                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Text(
-                                    text = "∞",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White.copy(alpha = 0.85f)
-                                )
-                            }
-                        }
-                    }
-
-                    // 3. Queue Button (Active / Selected!)
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.35f))
-                            .clickable {
-                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                MusicPlayerState.queueOpen = false
+                                onLyricsInteraction()
+                                MusicPlayerState.lyricsOpen = false
+                                MusicPlayerState.queueOpen = !MusicPlayerState.queueOpen
                             },
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
                             painter = painterResource(R.drawable.queue_music),
                             contentDescription = "Queue",
-                            colorFilter = ColorFilter.tint(Color.White),
+                            colorFilter = ColorFilter.tint(
+                                if (isQueueOpen) Color.White else Color.White.copy(alpha = 0.90f)
+                            ),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    // Lyrics Button
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isLyricsOpen) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
+                            )
+                            .clickable {
+                                onLyricsInteraction()
+                                MusicPlayerState.queueOpen = false
+                                MusicPlayerState.lyricsOpen = !MusicPlayerState.lyricsOpen
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.lyrics),
+                            contentDescription = "Lyrics",
+                            colorFilter = ColorFilter.tint(
+                                if (isLyricsOpen) Color.White else Color.White.copy(alpha = 0.90f)
+                            ),
                             modifier = Modifier.size(24.dp)
                         )
                     }
                 }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+
+                // YouTube Pill Button -> Directly opens YouTube
+                Box(
+                    modifier = Modifier
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Color.White.copy(alpha = 0.14f))
+                        .clickable {
+                            onLyricsInteraction()
+                            val videoId = track.id
+                            try {
+                                val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")).apply {
+                                    setPackage("com.google.android.youtube")
+                                }
+                                context.startActivity(ytIntent)
+                            } catch (_: Exception) {
+                                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId"))
+                                context.startActivity(webIntent)
+                            }
+                        }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Queue Button
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.12f))
-                                .clickable {
-                                    onLyricsInteraction()
-                                    MusicPlayerState.lyricsOpen = false
-                                    MusicPlayerState.queueOpen = true
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(R.drawable.queue_music),
-                                contentDescription = "Queue",
-                                colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.90f)),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        // Lyrics Button
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isLyricsOpen) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
-                                )
-                                .clickable {
-                                    onLyricsInteraction()
-                                    MusicPlayerState.queueOpen = false
-                                    MusicPlayerState.lyricsOpen = !MusicPlayerState.lyricsOpen
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(R.drawable.lyrics),
-                                contentDescription = "Lyrics",
-                                colorFilter = ColorFilter.tint(
-                                    if (isLyricsOpen) Color.White else Color.White.copy(alpha = 0.90f)
-                                ),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-
-                    // YouTube Pill Button -> Directly opens YouTube
-                    Box(
-                        modifier = Modifier
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(Color.White.copy(alpha = 0.14f))
-                            .clickable {
-                                onLyricsInteraction()
-                                val videoId = track.id
-                                try {
-                                    val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")).apply {
-                                        setPackage("com.google.android.youtube")
-                                    }
-                                    context.startActivity(ytIntent)
-                                } catch (_: Exception) {
-                                    val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId"))
-                                    context.startActivity(webIntent)
-                                }
-                            }
-                            .padding(horizontal = 16.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Image(
-                                painter = painterResource(R.drawable.youtube),
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = "YouTube",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                color = Color.White
-                            )
-                        }
+                        Image(
+                            painter = painterResource(R.drawable.youtube),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "YouTube",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = Color.White
+                        )
                     }
                 }
             }
@@ -2165,19 +2059,71 @@ private fun InPlayerQueueContent(
         contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // "Queue" Title
+        // "Queue" Title Row with Shuffle & Repeat Capsule at the end
         item(key = "header_queue") {
-            Text(
-                text = "Queue",
-                style = TextStyle(
-                    fontFamily = SFProDisplay,
-                    fontWeight = FontWeight.W800,
-                    fontSize = 24.sp,
-                    letterSpacing = (-0.5).sp
-                ),
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 2.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Queue",
+                    style = TextStyle(
+                        fontFamily = SFProDisplay,
+                        fontWeight = FontWeight.W800,
+                        fontSize = 24.sp,
+                        letterSpacing = (-0.5).sp
+                    ),
+                    color = Color.White
+                )
+
+                // Capsule Pill (Shuffle & Repeat)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.White.copy(alpha = 0.16f),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        // Shuffle
+                        IconButton(
+                            onClick = {
+                                onUserInteraction()
+                                MusicPlayerState.toggleShuffle()
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Shuffle,
+                                contentDescription = "Shuffle",
+                                tint = if (MusicPlayerState.shuffleEnabled) Color.White else Color.White.copy(alpha = 0.45f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Repeat
+                        IconButton(
+                            onClick = {
+                                onUserInteraction()
+                                MusicPlayerState.toggleRepeat()
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (MusicPlayerState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                                contentDescription = "Repeat",
+                                tint = if (MusicPlayerState.repeatMode != Player.REPEAT_MODE_OFF) Color.White else Color.White.copy(alpha = 0.45f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // "Now playing" Subtitle
@@ -2287,27 +2233,16 @@ private fun InPlayerQueueContent(
                     .fillMaxWidth()
                     .padding(top = 10.dp, bottom = 4.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "∞",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Text(
-                        text = "AutoPlay",
-                        style = TextStyle(
-                            fontFamily = SFProDisplay,
-                            fontWeight = FontWeight.W700,
-                            fontSize = 16.sp,
-                            letterSpacing = (-0.2).sp
-                        ),
-                        color = Color.White
-                    )
-                }
+                Text(
+                    text = "AutoPlay",
+                    style = TextStyle(
+                        fontFamily = SFProDisplay,
+                        fontWeight = FontWeight.W700,
+                        fontSize = 16.sp,
+                        letterSpacing = (-0.2).sp
+                    ),
+                    color = Color.White
+                )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = "Similar music, selected to play next",
