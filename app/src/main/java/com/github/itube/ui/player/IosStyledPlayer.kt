@@ -58,6 +58,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -74,6 +75,11 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.Headphones
@@ -82,7 +88,10 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.ZoomIn
@@ -318,10 +327,13 @@ fun IosStyledPlayer(
     }
 
     val isLyricsOpen = MusicPlayerState.lyricsOpen
-    val lyricsProgress by animateFloatAsState(
-        targetValue = if (isLyricsOpen) 1f else 0f,
+    val isQueueOpen = MusicPlayerState.queueOpen
+    val isPanelOpen = isLyricsOpen || isQueueOpen
+
+    val panelProgress by animateFloatAsState(
+        targetValue = if (isPanelOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-        label = "lyricsProgress"
+        label = "panelProgress"
     )
 
     var areLyricsControlsVisible by remember { mutableStateOf(true) }
@@ -348,8 +360,8 @@ fun IosStyledPlayer(
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(isLyricsOpen, lastLyricsInteractionTime, areLyricsControlsVisible, isSeeking) {
-        if (isLyricsOpen && areLyricsControlsVisible && !isSeeking) {
+    LaunchedEffect(isLyricsOpen, isQueueOpen, lastLyricsInteractionTime, areLyricsControlsVisible, isSeeking) {
+        if (isLyricsOpen && !isQueueOpen && areLyricsControlsVisible && !isSeeking) {
             delay(2000L)
             areLyricsControlsVisible = false
         }
@@ -365,25 +377,27 @@ fun IosStyledPlayer(
     val density = LocalDensity.current
 
     val controlsTranslationY by animateFloatAsState(
-        targetValue = if (!isLyricsOpen || areLyricsControlsVisible) 0f else with(density) { 340.dp.toPx() },
+        targetValue = if (!isLyricsOpen || isQueueOpen || areLyricsControlsVisible) 0f else with(density) { 340.dp.toPx() },
         animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
         label = "lyricsControlsTranslationY"
     )
 
     val controlsAlpha by animateFloatAsState(
-        targetValue = if (!isLyricsOpen || areLyricsControlsVisible) 1f else 0f,
+        targetValue = if (!isLyricsOpen || isQueueOpen || areLyricsControlsVisible) 1f else 0f,
         animationSpec = tween(durationMillis = 280),
         label = "lyricsControlsAlpha"
     )
 
-    val lyricsBottomPadding by animateDpAsState(
-        targetValue = if (!areLyricsControlsVisible && isLyricsOpen) 24.dp else 295.dp,
+    val contentBottomPadding by animateDpAsState(
+        targetValue = if (!areLyricsControlsVisible && isLyricsOpen && !isQueueOpen) 24.dp else 295.dp,
         animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
-        label = "lyricsBottomPadding"
+        label = "contentBottomPadding"
     )
 
     BackHandler(enabled = MusicPlayerState.expanded) {
-        if (isLyricsOpen) {
+        if (isQueueOpen) {
+            MusicPlayerState.queueOpen = false
+        } else if (isLyricsOpen) {
             MusicPlayerState.lyricsOpen = false
         } else if (MusicPlayerState.isVideoFullscreen) {
             MusicPlayerState.isVideoFullscreen = false
@@ -438,11 +452,11 @@ fun IosStyledPlayer(
 
         // ── 1. Continuous Morphing Artwork Avatar (Full Bleed at Top -> Mini Thumbnail at Top-Left) ──
         if (!isVideoMode || !isVideoFullscreen) {
-            val artTop = lerpDp(0.dp, statusBarTopDp + 8.dp, lyricsProgress)
-            val artStart = lerpDp(0.dp, 16.dp, lyricsProgress)
-            val artWidth = lerpDp(maxWidth, 44.dp, lyricsProgress)
-            val artHeight = lerpDp(fullBleedHeight, 44.dp, lyricsProgress)
-            val artRadius = lerpDp(0.dp, 10.dp, lyricsProgress)
+            val artTop = lerpDp(0.dp, statusBarTopDp + 8.dp, panelProgress)
+            val artStart = lerpDp(0.dp, 16.dp, panelProgress)
+            val artWidth = lerpDp(maxWidth, 44.dp, panelProgress)
+            val artHeight = lerpDp(fullBleedHeight, 44.dp, panelProgress)
+            val artRadius = lerpDp(0.dp, 10.dp, panelProgress)
 
             Box(
                 modifier = Modifier
@@ -450,12 +464,13 @@ fun IosStyledPlayer(
                     .size(width = artWidth, height = artHeight)
                     .clip(RoundedCornerShape(artRadius))
                     .then(
-                        if (lyricsProgress > 0.85f) {
+                        if (panelProgress > 0.85f) {
                             Modifier
-                                .border(1.dp, Color.White.copy(alpha = 0.22f * lyricsProgress), RoundedCornerShape(artRadius))
+                                .border(1.dp, Color.White.copy(alpha = 0.22f * panelProgress), RoundedCornerShape(artRadius))
                                 .clickable {
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                     MusicPlayerState.lyricsOpen = false
+                                    MusicPlayerState.queueOpen = false
                                 }
                         } else Modifier
                     )
@@ -467,7 +482,7 @@ fun IosStyledPlayer(
                     modifier = Modifier
                         .fillMaxSize()
                         .drawWithCache {
-                            val fadeStart = lerpFloat(0.48f, 1f, lyricsProgress)
+                            val fadeStart = lerpFloat(0.48f, 1f, panelProgress)
                             val gradientMask = Brush.verticalGradient(
                                 colorStops = arrayOf(
                                     0f to Color.Black,
@@ -477,7 +492,7 @@ fun IosStyledPlayer(
                             )
                             onDrawWithContent {
                                 drawContent()
-                                if (lyricsProgress < 0.95f) {
+                                if (panelProgress < 0.95f) {
                                     drawRect(
                                         brush = gradientMask,
                                         blendMode = BlendMode.DstIn
@@ -489,14 +504,14 @@ fun IosStyledPlayer(
             }
         }
 
-        // ── 2. Ambient Blurred Artwork Layer (Visibly moves UP from bottom to fill the entire screen in Lyrics Mode) ──
+        // ── 2. Ambient Blurred Artwork Layer (Visibly moves UP from bottom to fill the entire screen in Lyrics / Queue Mode) ──
         val blurTranslateY by animateDpAsState(
-            targetValue = if (isLyricsOpen) 0.dp else 220.dp,
+            targetValue = if (isPanelOpen) 0.dp else 220.dp,
             animationSpec = tween(420, easing = FastOutSlowInEasing),
             label = "blurTranslateY"
         )
         val blurMaskStart by animateFloatAsState(
-            targetValue = if (isLyricsOpen) 0f else 0.40f,
+            targetValue = if (isPanelOpen) 0f else 0.40f,
             animationSpec = tween(420, easing = FastOutSlowInEasing),
             label = "blurMaskStart"
         )
@@ -525,7 +540,7 @@ fun IosStyledPlayer(
                     )
                     onDrawWithContent {
                         drawContent()
-                        if (lyricsProgress < 0.99f) {
+                        if (panelProgress < 0.99f) {
                             drawRect(brush = mask, blendMode = BlendMode.DstIn)
                         }
                     }
@@ -539,11 +554,11 @@ fun IosStyledPlayer(
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0f to Color.Black.copy(alpha = lerpFloat(0.35f, 0.20f, lyricsProgress)),
+                            0f to Color.Black.copy(alpha = lerpFloat(0.35f, 0.20f, panelProgress)),
                             0.25f to Color.Transparent,
-                            0.50f to Color.Black.copy(alpha = lerpFloat(0.40f, 0.32f, lyricsProgress)),
-                            0.75f to Color.Black.copy(alpha = lerpFloat(0.65f, 0.48f, lyricsProgress)),
-                            1f to Color.Black.copy(alpha = lerpFloat(0.92f, 0.58f, lyricsProgress)),
+                            0.50f to Color.Black.copy(alpha = lerpFloat(0.40f, 0.32f, panelProgress)),
+                            0.75f to Color.Black.copy(alpha = lerpFloat(0.65f, 0.48f, panelProgress)),
+                            1f to Color.Black.copy(alpha = lerpFloat(0.92f, 0.58f, panelProgress)),
                         )
                     )
                 )
@@ -631,16 +646,16 @@ fun IosStyledPlayer(
         }
 
         // ── Square Video Window (When in Video Mode, not fullscreen) ──
-        if (isVideoMode && !isVideoFullscreen && lyricsProgress < 0.99f) {
+        if (isVideoMode && !isVideoFullscreen && panelProgress < 0.99f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
                     .padding(top = 58.dp, bottom = 270.dp, start = 20.dp, end = 20.dp)
                     .graphicsLayer {
-                        alpha = (1f - lyricsProgress).coerceIn(0f, 1f)
-                        scaleX = 1f - (lyricsProgress * 0.18f)
-                        scaleY = 1f - (lyricsProgress * 0.18f)
+                        alpha = (1f - panelProgress).coerceIn(0f, 1f)
+                        scaleX = 1f - (panelProgress * 0.18f)
+                        scaleY = 1f - (panelProgress * 0.18f)
                     },
                 contentAlignment = Alignment.TopCenter
             ) {
@@ -740,15 +755,15 @@ fun IosStyledPlayer(
         }
 
         // ── In-Player Synced Lyrics Screen ──
-        if (lyricsProgress > 0.001f) {
+        if (isLyricsOpen && panelProgress > 0.001f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
                     .padding(top = 66.dp)
-                    .padding(bottom = lyricsBottomPadding)
+                    .padding(bottom = contentBottomPadding)
                     .graphicsLayer {
-                        alpha = lyricsProgress
+                        alpha = panelProgress
                     }
                     .clickable(
                         indication = null,
@@ -773,25 +788,51 @@ fun IosStyledPlayer(
             }
         }
 
-        // ── Top Navigation Bar (Collapse Chevron, Centered Switch Pill, More Menu, In-Player Lyrics Header) ──
+        // ── In-Player Queue Screen ──
+        if (isQueueOpen && panelProgress > 0.001f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(top = 66.dp)
+                    .padding(bottom = contentBottomPadding)
+                    .graphicsLayer {
+                        alpha = panelProgress
+                    }
+            ) {
+                InPlayerQueueContent(
+                    currentTrack = track,
+                    queue = MusicPlayerState.queue,
+                    currentIndex = MusicPlayerState.queueIndex,
+                    isPlaying = isPlaying,
+                    onTrackClick = { clickedTrack: MusicTrack ->
+                        MusicPlayerState.play(clickedTrack, null)
+                    },
+                    onRemoveTrack = { idx: Int ->
+                        MusicPlayerState.removeFromQueue(idx)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // ── Top Navigation Bar (Collapse Chevron, Centered Switch Pill, More Menu, In-Player Header) ──
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            // Normal Collapse Chevron (fades out in lyrics mode)
+            // Normal Collapse Chevron (fades out in lyrics or queue mode)
             IconButton(
                 onClick = onCollapse,
                 modifier = Modifier
                     .size(44.dp)
                     .align(Alignment.CenterStart)
                     .graphicsLayer {
-                        alpha = (1f - lyricsProgress).coerceIn(0f, 1f)
-                        scaleX = 1f - 0.2f * lyricsProgress
-                        scaleY = 1f - 0.2f * lyricsProgress
+                        alpha = (1f - panelProgress * 2.5f).coerceIn(0f, 1f)
                     },
-                enabled = lyricsProgress < 0.2f
+                enabled = panelProgress < 0.2f
             ) {
                 Icon(
                     imageVector = Icons.Rounded.KeyboardArrowDown,
@@ -801,18 +842,18 @@ fun IosStyledPlayer(
                 )
             }
 
-            // Top Song / Video Switch Pill (Always Centered in music mode, disappears in lyrics mode)
+            // Top Song / Video Switch Pill (Always Centered in music mode, disappears in lyrics/queue mode)
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .graphicsLayer {
-                        alpha = (1f - lyricsProgress * 2f).coerceIn(0f, 1f)
+                        alpha = (1f - panelProgress * 2.5f).coerceIn(0f, 1f)
                     }
             ) {
                 MusicVideoSwitchPill(
                     isVideoMode = isVideoMode,
                     onToggle = { toVideo ->
-                        if (lyricsProgress < 0.2f) {
+                        if (panelProgress < 0.2f) {
                             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                             MusicPlayerState.isVideoMode = toVideo
                             if (!toVideo) {
@@ -885,16 +926,16 @@ fun IosStyledPlayer(
                 }
             }
 
-            // Lyrics Mode Header Title & Artist (Placed right next to the morphing avatar thumbnail)
-            if (lyricsProgress > 0.01f) {
+            // Lyrics / Queue Mode Header Title & Artist (Placed right next to the morphing avatar thumbnail)
+            if (panelProgress > 0.01f) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = 54.dp, end = 48.dp)
                         .align(Alignment.CenterStart)
                         .graphicsLayer {
-                            alpha = lyricsProgress
-                            translationX = (1f - lyricsProgress) * 20.dp.toPx()
+                            alpha = panelProgress
+                            translationX = (1f - panelProgress) * 20.dp.toPx()
                         },
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -999,7 +1040,7 @@ fun IosStyledPlayer(
                         // Sit just above the button row with tight breathing space, avoiding the high floating gap.
                         .graphicsLayer {
                             translationY = -50.dp.toPx()
-                            alpha = (1f - lyricsProgress).coerceIn(0f, 1f)
+                            alpha = (1f - panelProgress).coerceIn(0f, 1f)
                         }
                         .onGloballyPositioned { coords ->
                             val root = rootBoxCoords
@@ -1247,97 +1288,209 @@ fun IosStyledPlayer(
 
             Spacer(Modifier.height(28.dp))
 
-            // ── Bottom Action Controls (Queue, Lyrics, YouTube Pill) ──
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            // ── Bottom Action Controls (Queue, Lyrics, YouTube Pill / Shuffle & Repeat Capsule) ──
+            if (isQueueOpen) {
+                // Queue Mode Bottom Bar: Lyrics on left, Capsule (Shuffle, Repeat, AutoPlay) in center, Queue on right
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Queue Button
+                    // 1. Lyrics Button (Unselected, clicking switches to lyrics)
                     Box(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.12f))
                             .clickable {
-                                onLyricsInteraction()
-                                MusicPlayerState.queueOpen = true
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.queue_music),
-                            contentDescription = "Queue",
-                            colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.90f)),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    // Lyrics Button
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (isLyricsOpen) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
-                            )
-                            .clickable {
-                                onLyricsInteraction()
-                                MusicPlayerState.lyricsOpen = !MusicPlayerState.lyricsOpen
+                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                MusicPlayerState.queueOpen = false
+                                MusicPlayerState.lyricsOpen = true
                             },
                         contentAlignment = Alignment.Center
                     ) {
                         Image(
                             painter = painterResource(R.drawable.lyrics),
                             contentDescription = "Lyrics",
-                            colorFilter = ColorFilter.tint(
-                                if (isLyricsOpen) Color.White else Color.White.copy(alpha = 0.90f)
-                            ),
+                            colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.90f)),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    // 2. Center Capsule Pill (Shuffle, Repeat, AutoPlay)
+                    Surface(
+                        shape = RoundedCornerShape(23.dp),
+                        color = Color.White.copy(alpha = 0.16f),
+                        modifier = Modifier.height(46.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            // Shuffle
+                            IconButton(
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    MusicPlayerState.toggleShuffle()
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Shuffle,
+                                    contentDescription = "Shuffle",
+                                    tint = if (MusicPlayerState.shuffleEnabled) Color.White else Color.White.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            // Repeat
+                            IconButton(
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    MusicPlayerState.toggleRepeat()
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (MusicPlayerState.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                                    contentDescription = "Repeat",
+                                    tint = if (MusicPlayerState.repeatMode != Player.REPEAT_MODE_OFF) Color.White else Color.White.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            // AutoPlay / Infinity
+                            IconButton(
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Text(
+                                    text = "∞",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
+                    }
+
+                    // 3. Queue Button (Active / Selected!)
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.35f))
+                            .clickable {
+                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                MusicPlayerState.queueOpen = false
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(R.drawable.queue_music),
+                            contentDescription = "Queue",
+                            colorFilter = ColorFilter.tint(Color.White),
                             modifier = Modifier.size(24.dp)
                         )
                     }
                 }
-
-                // YouTube Pill Button -> Directly opens YouTube
-                Box(
-                    modifier = Modifier
-                        .height(44.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(Color.White.copy(alpha = 0.14f))
-                        .clickable {
-                            onLyricsInteraction()
-                            val videoId = track.id
-                            try {
-                                val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")).apply {
-                                    setPackage("com.google.android.youtube")
-                                }
-                                context.startActivity(ytIntent)
-                            } catch (_: Exception) {
-                                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId"))
-                                context.startActivity(webIntent)
-                            }
-                        }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Image(
-                            painter = painterResource(R.drawable.youtube),
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = "YouTube",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = Color.White
-                        )
+                        // Queue Button
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.12f))
+                                .clickable {
+                                    onLyricsInteraction()
+                                    MusicPlayerState.lyricsOpen = false
+                                    MusicPlayerState.queueOpen = true
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.queue_music),
+                                contentDescription = "Queue",
+                                colorFilter = ColorFilter.tint(Color.White.copy(alpha = 0.90f)),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        // Lyrics Button
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isLyricsOpen) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
+                                )
+                                .clickable {
+                                    onLyricsInteraction()
+                                    MusicPlayerState.queueOpen = false
+                                    MusicPlayerState.lyricsOpen = !MusicPlayerState.lyricsOpen
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.lyrics),
+                                contentDescription = "Lyrics",
+                                colorFilter = ColorFilter.tint(
+                                    if (isLyricsOpen) Color.White else Color.White.copy(alpha = 0.90f)
+                                ),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    // YouTube Pill Button -> Directly opens YouTube
+                    Box(
+                        modifier = Modifier
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Color.White.copy(alpha = 0.14f))
+                            .clickable {
+                                onLyricsInteraction()
+                                val videoId = track.id
+                                try {
+                                    val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")).apply {
+                                        setPackage("com.google.android.youtube")
+                                    }
+                                    context.startActivity(ytIntent)
+                                } catch (_: Exception) {
+                                    val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId"))
+                                    context.startActivity(webIntent)
+                                }
+                            }
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(R.drawable.youtube),
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "YouTube",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -1962,5 +2115,277 @@ private fun Modifier.videoAspectFit(
         val bias = if (cover) 0.5f else ((verticalBias + 1f) / 2f).coerceIn(0f, 1f)
         val y = ((boxH - h) * bias).roundToInt()
         placeable.place(x, y)
+    }
+}
+
+/**
+ * In-Player Queue Content view.
+ * Renders the queue directly inside the player with smooth animated transition,
+ * showing the "Queue" title, currently playing card with equalizer, and upcoming tracks with drag handles.
+ */
+@Composable
+private fun InPlayerQueueContent(
+    currentTrack: MusicTrack,
+    queue: List<MusicTrack>,
+    currentIndex: Int,
+    isPlaying: Boolean,
+    onTrackClick: (MusicTrack) -> Unit,
+    onRemoveTrack: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val listState = rememberLazyListState()
+    val upcomingItems = if (currentIndex in 0 until queue.size - 1) {
+        queue.subList(currentIndex + 1, queue.size)
+    } else {
+        emptyList()
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // "Queue" Title
+        item(key = "header_queue") {
+            Text(
+                text = "Queue",
+                style = TextStyle(
+                    fontFamily = SFProDisplay,
+                    fontWeight = FontWeight.W800,
+                    fontSize = 24.sp,
+                    letterSpacing = (-0.5).sp
+                ),
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+        }
+
+        // "Now playing" Subtitle
+        item(key = "header_now_playing") {
+            Text(
+                text = "Now playing",
+                style = TextStyle(
+                    fontFamily = SFProDisplay,
+                    fontWeight = FontWeight.W600,
+                    fontSize = 15.sp,
+                    letterSpacing = (-0.2).sp
+                ),
+                color = Color.White.copy(alpha = 0.65f),
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+        }
+
+        // Currently Playing Track
+        item(key = "now_playing_track") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Thumbnail
+                AsyncImage(
+                    model = currentTrack.thumbnailUrl?.highQualityThumbnail(),
+                    contentDescription = currentTrack.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+
+                Spacer(Modifier.width(14.dp))
+
+                // Title & Artist
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = currentTrack.title,
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W700,
+                            fontSize = 15.sp,
+                            lineHeight = 18.sp,
+                            letterSpacing = (-0.3).sp
+                        ),
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = currentTrack.artists,
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W400,
+                            fontSize = 13.sp,
+                            lineHeight = 16.sp
+                        ),
+                        color = Color.White.copy(alpha = 0.62f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(Modifier.width(10.dp))
+
+                // Equalizer Icon
+                Icon(
+                    imageVector = Icons.Rounded.GraphicEq,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+
+                Spacer(Modifier.width(12.dp))
+
+                // Close / Remove Icon
+                IconButton(
+                    onClick = {
+                        if (currentIndex in queue.indices) {
+                            onRemoveTrack(currentIndex)
+                        }
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Remove",
+                        tint = Color.White.copy(alpha = 0.55f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+
+        // "AutoPlay" Section Header
+        item(key = "header_autoplay") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp, bottom = 4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "∞",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "AutoPlay",
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W700,
+                            fontSize = 16.sp,
+                            letterSpacing = (-0.2).sp
+                        ),
+                        color = Color.White
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Similar music, selected to play next",
+                    style = TextStyle(
+                        fontFamily = SFProDisplay,
+                        fontWeight = FontWeight.W400,
+                        fontSize = 13.sp
+                    ),
+                    color = Color.White.copy(alpha = 0.55f)
+                )
+            }
+        }
+
+        // Upcoming Queued Tracks List
+        itemsIndexed(
+            items = upcomingItems,
+            key = { idx, item -> "upcoming_${item.id}_$idx" }
+        ) { relativeIdx, item ->
+            val actualIdx = currentIndex + 1 + relativeIdx
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onTrackClick(item) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Drag handle icon on left
+                Icon(
+                    imageVector = Icons.Rounded.DragHandle,
+                    contentDescription = "Reorder",
+                    tint = Color.White.copy(alpha = 0.40f),
+                    modifier = Modifier.size(20.dp)
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                // Thumbnail
+                AsyncImage(
+                    model = item.thumbnailUrl?.highQualityThumbnail(),
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+
+                Spacer(Modifier.width(14.dp))
+
+                // Title & Artist
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = item.title,
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W600,
+                            fontSize = 15.sp,
+                            lineHeight = 18.sp,
+                            letterSpacing = (-0.3).sp
+                        ),
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = item.artists,
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W400,
+                            fontSize = 13.sp,
+                            lineHeight = 16.sp
+                        ),
+                        color = Color.White.copy(alpha = 0.62f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(Modifier.width(8.dp))
+
+                // Close / Remove icon
+                IconButton(
+                    onClick = { onRemoveTrack(actualIdx) },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Remove",
+                        tint = Color.White.copy(alpha = 0.50f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
     }
 }

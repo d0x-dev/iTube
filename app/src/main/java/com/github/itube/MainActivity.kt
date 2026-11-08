@@ -1116,10 +1116,7 @@ fun AirStreamApp() {
         }
         }
 
-        // ── Queue Pop-up Sheet ──
-        if (MusicPlayerState.queueOpen) {
-            MusicQueueSheet(onDismiss = { MusicPlayerState.queueOpen = false })
-        }
+        // In-player queue is handled directly inside IosStyledPlayer
 
         if (accountSheet) {
             AccountSheet(
