@@ -83,8 +83,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -115,6 +119,14 @@ import kotlin.math.sin
 // ──────────────────────────────────────────────────────────────────────
 // AirBeats Lyrics Constants
 // ──────────────────────────────────────────────────────────────────────
+
+val SFProDisplay = FontFamily(
+    Font(R.font.sf_pro_display_regular, FontWeight.W400),
+    Font(R.font.sf_pro_display_medium, FontWeight.W500),
+    Font(R.font.sf_pro_display_semibold, FontWeight.W600),
+    Font(R.font.sf_pro_display_bold, FontWeight.W700),
+    Font(R.font.sf_pro_display_heavy, FontWeight.W800),
+)
 
 private const val MANUAL_SCROLL_TIMEOUT_MS = 3000L
 private val HEAD_LYRICS_ENTRY = AirBeatsLyricsEntry(time = 0L, text = "")
@@ -566,9 +578,9 @@ internal fun AirBeatsLyricsV2Content(
     val lyricsLoading = MusicPlayerState.lyricsLoading
 
     val textColor = Color.White
-    val inactiveAlpha = 0.35f
-    val lyricsTextSize = 26f
-    val lyricsLineSpacing = 1.3f
+    val inactiveAlpha = 0.38f
+    val lyricsTextSize = 27f
+    val lyricsLineSpacing = 1.25f
 
     // Selection mode state (from AirBeats)
     var isSelectionModeActive by rememberSaveable { mutableStateOf(false) }
@@ -717,57 +729,57 @@ internal fun AirBeatsLyricsV2Content(
                 .nestedScroll(nestedScrollConnection)
                 .smoothFadingEdge(vertical = 80.dp)
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
-            horizontalAlignment = Alignment.CenterHorizontally
+            contentPadding = PaddingValues(
+                start = 22.dp,
+                end = 22.dp,
+                top = 24.dp,
+                bottom = 280.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.Start
         ) {
             itemsIndexed(
                 items = entriesWithWords,
                 key = { index, entry -> "${index}_${entry.time}" }
             ) { index, item ->
                 if (item == HEAD_LYRICS_ENTRY) {
-                    Spacer(modifier = Modifier.height(120.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     return@itemsIndexed
                 }
 
-                val textAlign = when (item.agent?.lowercase()) {
-                    "v1", null -> TextAlign.Start
-                    "v2" -> TextAlign.End
-                    else -> TextAlign.Center
-                }
-                val horizontalAlignment = when (item.agent?.lowercase()) {
-                    "v1", null -> Alignment.Start
-                    "v2" -> Alignment.End
-                    else -> Alignment.CenterHorizontally
-                }
+                val textAlign = TextAlign.Start
+                val horizontalAlignment = Alignment.Start
 
                 val isActive = isSynced && index == currentLineIndex
                 val isPast = isSynced && index < currentLineIndex
 
                 val distanceFromActive = if (isSynced) abs(index - currentLineIndex) else 0
                 val lineAlpha = when {
-                    !isSynced -> 0.9f
+                    !isSynced -> 0.95f
                     isActive -> 1f
-                    else -> (inactiveAlpha - (distanceFromActive - 1) * 0.03f).coerceIn(0.15f, inactiveAlpha)
+                    else -> (inactiveAlpha - (distanceFromActive - 1) * 0.04f).coerceIn(0.18f, inactiveAlpha)
                 }
                 val wordLineAlpha = if (item.words != null && isSynced) 1f else lineAlpha
 
                 val isSelected = selectedIndices.contains(index)
+                val lineScale = if (isActive && isSynced) 1.04f else 1f
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .graphicsLayer {
+                            scaleX = lineScale
+                            scaleY = lineScale
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                            alpha = wordLineAlpha
+                        }
                         .background(
                             color = if (isSelected && isSelectionModeActive)
                                 MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                             else Color.Transparent,
                             shape = RoundedCornerShape(8.dp)
                         )
-                        .padding(
-                            start = 12.dp,
-                            end = 12.dp,
-                            top = if (index <= 1) 0.dp else (lyricsLineSpacing * 8).dp,
-                            bottom = (lyricsLineSpacing * 8).dp
-                        )
-                        .alpha(wordLineAlpha)
+                        .padding(vertical = 4.dp)
                         .combinedClickable(
                             enabled = true,
                             onClick = {
@@ -795,7 +807,7 @@ internal fun AirBeatsLyricsV2Content(
                     horizontalAlignment = horizontalAlignment
                 ) {
                     if (!item.words.isNullOrEmpty() && isSynced) {
-                        // Word-synced fluid rendering
+                        // Word-synced fluid rendering with SF Pro Display
                         AirBeatsLyricsLineV2(
                             words = item.words,
                             isActive = isActive,
@@ -807,13 +819,15 @@ internal fun AirBeatsLyricsV2Content(
                             textAlign = textAlign
                         )
                     } else {
-                        // Plain text rendering
+                        // Plain text rendering with SF Pro Display
                         Text(
                             text = item.text,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontSize = lyricsTextSize.sp,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
-                                lineHeight = (lyricsTextSize * lyricsLineSpacing).sp
+                            style = TextStyle(
+                                fontFamily = SFProDisplay,
+                                fontSize = if (isSynced) 27.sp else 23.sp,
+                                fontWeight = if (isActive) FontWeight.W800 else FontWeight.W700,
+                                letterSpacing = (-0.6).sp,
+                                lineHeight = 33.sp
                             ),
                             color = textColor.copy(alpha = if (isActive) 1f else inactiveAlpha),
                             textAlign = textAlign,
@@ -962,7 +976,13 @@ private fun AirBeatsLyricsLineV2(
             if (word.text == " ") {
                 Text(
                     text = " ",
-                    style = MaterialTheme.typography.headlineMedium.copy(fontSize = baseFontSize.sp),
+                    style = TextStyle(
+                        fontFamily = SFProDisplay,
+                        fontSize = baseFontSize.sp,
+                        fontWeight = if (isActive) FontWeight.W800 else FontWeight.W700,
+                        letterSpacing = (-0.6).sp,
+                        lineHeight = 33.sp
+                    ),
                     color = Color.Transparent
                 )
                 return@forEachIndexed
@@ -1008,7 +1028,7 @@ private fun AirBeatsAnimatedWordV2(
         else -> ((currentPositionMs - wordStartMs).toFloat() / wordDuration).coerceIn(0f, 1f)
     }
 
-    // AirBeats Bounce & Float Animation
+    // Bounce & Float Animation
     val sinProgress = sin(progress * PI).toFloat()
     val wordScale = 1f + (0.015f * sinProgress)
 
@@ -1022,13 +1042,22 @@ private fun AirBeatsAnimatedWordV2(
         label = "wordFloat"
     )
 
-    // AirBeats Glow Intensity
+    // Glow Intensity
     val glowProgress = (progress * 2f).coerceAtMost(1f)
     val glowAlpha = if (isWordActive) glowProgress * 0.45f else 0f
     val glowRadius = if (isWordActive) glowProgress * 12f else 0f
 
-    val fontWeight = FontWeight.SemiBold
+    val fontWeight = if (isLineActive) FontWeight.W800 else FontWeight.W700
     val density = LocalDensity.current
+
+    val wordStyle = TextStyle(
+        fontFamily = SFProDisplay,
+        fontSize = fontSize.sp,
+        fontWeight = fontWeight,
+        fontStyle = FontStyle.Normal,
+        letterSpacing = (-0.6).sp,
+        lineHeight = 33.sp
+    )
 
     Box(
         modifier = Modifier
@@ -1041,12 +1070,7 @@ private fun AirBeatsAnimatedWordV2(
         // Layer 1: Base text (always dimmed)
         Text(
             text = word.text,
-            style = MaterialTheme.typography.headlineMedium.copy(
-                fontSize = fontSize.sp,
-                fontWeight = fontWeight,
-                fontStyle = FontStyle.Normal,
-                lineHeight = (fontSize * 1.35f).sp
-            ),
+            style = wordStyle,
             color = textColor.copy(alpha = inactiveAlpha)
         )
 
@@ -1054,11 +1078,7 @@ private fun AirBeatsAnimatedWordV2(
         if (isWordComplete || isWordActive || isLinePast) {
             Text(
                 text = word.text,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontSize = fontSize.sp,
-                    fontWeight = fontWeight,
-                    fontStyle = FontStyle.Normal,
-                    lineHeight = (fontSize * 1.35f).sp,
+                style = wordStyle.copy(
                     shadow = if (glowAlpha > 0f) {
                         Shadow(
                             color = textColor.copy(alpha = glowAlpha),

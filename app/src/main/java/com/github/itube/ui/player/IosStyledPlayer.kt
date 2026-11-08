@@ -132,6 +132,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -899,20 +900,27 @@ fun IosStyledPlayer(
                 ) {
                     Text(
                         text = track.title,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W700,
                             fontSize = 15.sp,
-                            lineHeight = 18.sp
+                            lineHeight = 18.sp,
+                            letterSpacing = (-0.3).sp
                         ),
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.basicMarquee()
                     )
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(1.dp))
                     Text(
                         text = track.artists,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        style = TextStyle(
+                            fontFamily = SFProDisplay,
+                            fontWeight = FontWeight.W500,
+                            fontSize = 12.5.sp,
+                            lineHeight = 15.sp
+                        ),
                         color = Color.White.copy(alpha = 0.72f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
