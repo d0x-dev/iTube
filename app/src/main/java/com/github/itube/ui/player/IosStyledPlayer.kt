@@ -449,16 +449,16 @@ fun IosStyledPlayer(
             }
     ) {
         val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        val fullBleedHeight = maxHeight * 0.52f
+        val fullBleedHeight = maxHeight * 0.56f
 
-        // ── 1. Ambient Blurred Artwork Layer (Down side in music mode, zooms to fill whole screen in lyrics/queue) ──
+        // ── 1. Ambient Blurred Artwork Layer (Deeply zoomed so top black margins never drop, with smooth breathing motion) ──
         val blurTranslateY by animateDpAsState(
-            targetValue = if (isPanelOpen) 0.dp else 190.dp,
+            targetValue = if (isPanelOpen) 0.dp else 60.dp,
             animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
             label = "blurTranslateY"
         )
         val blurScale by animateFloatAsState(
-            targetValue = if (isPanelOpen) 1.28f else 1.15f,
+            targetValue = if (isPanelOpen) 1.38f else 1.35f,
             animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
             label = "blurScale"
         )
@@ -787,10 +787,12 @@ fun IosStyledPlayer(
             ) {
                 // Sharp Artwork Image with smooth gradient alpha fade at the bottom edge in music mode
                 // dissolving seamlessly into the down-side ambient blur layer below.
-                // As panelProgress moves towards 1f, fadeStart and fadeEndAlpha animate to 1f,
-                // leaving the morphing 44dp avatar 100% opaque, crisp, and intact at the top-left corner.
-                val fadeStart = lerpFloat(0.60f, 1f, panelProgress)
-                val fadeEndAlpha = panelProgress
+                // Only activate the bottom dissolve fade when settled in the main music player (panelProgress < 0.12f).
+                // During the entire flight to/from the corner avatar (panelProgress >= 0.12f), keep the avatar 100% crisp and solid
+                // so it never begins blurring from the corner upon tapping close!
+                val playerFadeWeight = (1f - panelProgress * 8f).coerceIn(0f, 1f)
+                val fadeStart = lerpFloat(1.0f, 0.72f, playerFadeWeight)
+                val fadeEndAlpha = lerpFloat(1.0f, 0.0f, playerFadeWeight)
 
                 AsyncImage(
                     model = track.thumbnailUrl?.highQualityThumbnail(),
