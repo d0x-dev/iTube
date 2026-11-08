@@ -334,7 +334,7 @@ fun IosStyledPlayer(
 
     val panelProgress by animateFloatAsState(
         targetValue = if (isPanelOpen) 1f else 0f,
-        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
         label = "panelProgress"
     )
 
@@ -378,7 +378,7 @@ fun IosStyledPlayer(
 
     val controlsTranslationY by animateFloatAsState(
         targetValue = if (!isPanelOpen || areLyricsControlsVisible) 0f else with(density) { 340.dp.toPx() },
-        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
         label = "lyricsControlsTranslationY"
     )
 
@@ -390,7 +390,7 @@ fun IosStyledPlayer(
 
     val contentBottomPadding by animateDpAsState(
         targetValue = if (!areLyricsControlsVisible && isPanelOpen) 24.dp else 295.dp,
-        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
         label = "contentBottomPadding"
     )
 
@@ -450,9 +450,17 @@ fun IosStyledPlayer(
         val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val fullBleedHeight = maxHeight * 0.52f
 
-        // ── 1. Ambient Blurred Artwork Layer (Background - Hardware Accelerated 120 FPS) ──
-        val blurAlpha = lerpFloat(0.48f, 0.88f, panelProgress)
-        val blurScale = lerpFloat(1.10f, 1.25f, panelProgress)
+        // ── 1. Ambient Blurred Artwork Layer (Down side in music mode, zooms to fill whole screen in lyrics/queue) ──
+        val blurTranslateY by animateDpAsState(
+            targetValue = if (isPanelOpen) 0.dp else 190.dp,
+            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+            label = "blurTranslateY"
+        )
+        val blurScale by animateFloatAsState(
+            targetValue = if (isPanelOpen) 1.28f else 1.15f,
+            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+            label = "blurScale"
+        )
 
         AsyncImage(
             model = track.thumbnailUrl?.highQualityThumbnail(),
@@ -460,26 +468,27 @@ fun IosStyledPlayer(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(45.dp)
+                .offset(y = blurTranslateY)
                 .graphicsLayer {
                     scaleX = blurScale
                     scaleY = blurScale
-                    alpha = blurAlpha
+                    alpha = 0.95f
+                    compositingStrategy = CompositingStrategy.Offscreen
                 }
+                .blur(50.dp)
         )
 
-        // ── 2. Luminous Scrim Gradient (Background Scrim Overlay) ──
+        // ── 2. Luminous Scrim Gradient (Background Scrim Overlay - Rich Colors, never pitch black) ──
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0f to Color.Black.copy(alpha = lerpFloat(0.35f, 0.20f, panelProgress)),
-                            0.25f to Color.Transparent,
-                            0.50f to Color.Black.copy(alpha = lerpFloat(0.40f, 0.32f, panelProgress)),
-                            0.75f to Color.Black.copy(alpha = lerpFloat(0.65f, 0.48f, panelProgress)),
-                            1f to Color.Black.copy(alpha = lerpFloat(0.92f, 0.58f, panelProgress)),
+                            0f to Color.Black.copy(alpha = 0.30f),
+                            0.30f to Color.Transparent,
+                            0.65f to Color.Black.copy(alpha = 0.25f),
+                            1f to Color.Black.copy(alpha = 0.52f),
                         )
                     )
                 )
@@ -515,6 +524,7 @@ fun IosStyledPlayer(
 
             Box(
                 modifier = Modifier
+                    .zIndex(15f)
                     .fillMaxSize()
                     .padding(
                         top = topPaddingDp.coerceAtLeast(0.dp),
@@ -570,6 +580,7 @@ fun IosStyledPlayer(
         if (isVideoMode && !isVideoFullscreen && panelProgress < 0.99f) {
             Box(
                 modifier = Modifier
+                    .zIndex(15f)
                     .fillMaxSize()
                     .statusBarsPadding()
                     .padding(top = 58.dp, bottom = 270.dp, start = 20.dp, end = 20.dp)
@@ -746,8 +757,9 @@ fun IosStyledPlayer(
             }
         }
 
-        // ── Continuous Morphing Artwork Avatar (Full Bleed at Top -> Mini Thumbnail at Top-Left) ──
-        if (!isVideoMode || !isVideoFullscreen) {
+        // ── Continuous Morphing Artwork Avatar (Sharp artwork layer over the blurred layer) ──
+        val showArtworkAvatar = (!isVideoMode || isPanelOpen) && (!isVideoFullscreen || isPanelOpen)
+        if (showArtworkAvatar) {
             val artTop = lerpDp(0.dp, statusBarTopDp + 6.dp, panelProgress)
             val artStart = lerpDp(0.dp, 16.dp, panelProgress)
             val artWidth = lerpDp(maxWidth, 44.dp, panelProgress)
@@ -779,22 +791,20 @@ fun IosStyledPlayer(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // In full music player mode, gently blend the bottom edge with the ambient background;
-                // this overlay smoothly fades out immediately as panelProgress starts,
-                // ensuring the avatar image is 100% complete and never has a cut-off lower edge!
-                if (panelProgress < 0.25f) {
+                // Gentle blend at the bottom of the sharp avatar into the down-side blur layer in music mode
+                if (panelProgress < 0.20f) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(fullBleedHeight * 0.40f)
+                            .height(fullBleedHeight * 0.35f)
                             .graphicsLayer {
-                                alpha = (1f - panelProgress * 4f).coerceIn(0f, 1f)
+                                alpha = (1f - panelProgress * 5f).coerceIn(0f, 1f)
                             }
                             .background(
                                 Brush.verticalGradient(
                                     0f to Color.Transparent,
-                                    1f to Color.Black
+                                    1f to Color.Black.copy(alpha = 0.55f)
                                 )
                             )
                     )
@@ -1010,15 +1020,15 @@ fun IosStyledPlayer(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // In music mode, show the track title, artist, and action buttons (Like, Dislike, Comment, Share).
-            // When in lyrics or queue mode, this row cleanly fades out so the controls remain compact and unobtrusive.
-            val metaRowAlpha = (1f - panelProgress * 2.5f).coerceIn(0f, 1f)
-            if (metaRowAlpha > 0.001f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .graphicsLayer { alpha = metaRowAlpha }
-                ) {
+            // Smoothly fade out the metadata row on the graphics layer without causing any layout shifts or animation hitching!
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .graphicsLayer {
+                        alpha = (1f - panelProgress * 2f).coerceIn(0f, 1f)
+                    }
+            ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1126,7 +1136,6 @@ fun IosStyledPlayer(
                 }
 
                 Spacer(Modifier.height(28.dp))
-            }
 
             // ── Wavy Seek Bar (AirBeats Expressive Squiggly Slider) ──
             WavySlider(
