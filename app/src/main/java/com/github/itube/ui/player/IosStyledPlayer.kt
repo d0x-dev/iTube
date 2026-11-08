@@ -222,17 +222,15 @@ fun IosStyledPlayer(
     var currentVideoTrackId by remember { mutableStateOf<String?>(null) }
     var loadedQualityHeight by remember { mutableIntStateOf(0) }
 
-    var activeTextureView by remember { mutableStateOf<TextureView?>(null) }
-    var videoAmbientFrame by remember { mutableStateOf<ImageBitmap?>(null) }
-    var audioAmbientFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+    var audioAmbientFrame by remember(track.id) { mutableStateOf<ImageBitmap?>(null) }
 
     // Synchronously / defensively fetch software decoded bitmap (allowHardware = false)
-    // for audio ambient glow, eliminating Android 12 RenderEffect GraphicBuffer failures on first play or song switch!
+    // for ambient glow, eliminating Android 12 RenderEffect GraphicBuffer failures on first play or song switch!
     LaunchedEffect(track.id, track.thumbnailUrl) {
         val targetUrl = track.thumbnailUrl?.highQualityThumbnail() ?: track.thumbnailUrl
         if (!targetUrl.isNullOrBlank()) {
             val bmp = withContext(Dispatchers.IO) {
-                runCatching {
+                var loadedBmp = runCatching {
                     val req = ImageRequest.Builder(context)
                         .data(targetUrl)
                         .allowHardware(false)
@@ -241,31 +239,24 @@ fun IosStyledPlayer(
                     val result = context.imageLoader.execute(req) as? SuccessResult
                     result?.drawable?.toBitmap()
                 }.getOrNull()
+
+                // If high-quality URL failed (e.g. 404), fall back immediately to standard thumbnail URL
+                if (loadedBmp == null && targetUrl != track.thumbnailUrl && !track.thumbnailUrl.isNullOrBlank()) {
+                    loadedBmp = runCatching {
+                        val req = ImageRequest.Builder(context)
+                            .data(track.thumbnailUrl)
+                            .allowHardware(false)
+                            .size(160)
+                            .build()
+                        val result = context.imageLoader.execute(req) as? SuccessResult
+                        result?.drawable?.toBitmap()
+                    }.getOrNull()
+                }
+                loadedBmp
             }
             if (bmp != null) {
                 audioAmbientFrame = bmp.asImageBitmap()
             }
-        }
-    }
-
-    // Live video ambient sampling: periodically samples a tiny 64x36 frame from the active TextureView
-    // and illuminates the entire display with dynamic, full-screen ambient glow in video mode (Zero black voids!).
-    LaunchedEffect(isVideoMode, isPlaying) {
-        if (!isVideoMode) {
-            videoAmbientFrame = null
-            return@LaunchedEffect
-        }
-        while (isActive && MusicPlayerState.isVideoMode) {
-            val tv = activeTextureView
-            if (tv != null && tv.isAvailable) {
-                try {
-                    val bmp = tv.getBitmap(64, 36)
-                    if (bmp != null) {
-                        videoAmbientFrame = bmp.asImageBitmap()
-                    }
-                } catch (_: Throwable) {}
-            }
-            delay(220L)
         }
     }
 
@@ -521,39 +512,41 @@ fun IosStyledPlayer(
             label = "blurScale"
         )
 
-        val ambientFrame = if (isVideoMode) videoAmbientFrame else audioAmbientFrame
-        if (ambientFrame != null) {
-            Image(
-                bitmap = ambientFrame,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(48.dp)
-                    .graphicsLayer {
-                        scaleX = blurScale
-                        scaleY = blurScale
-                        alpha = 0.95f
-                    }
-            )
-        } else {
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(track.thumbnailUrl?.highQualityThumbnail() ?: track.thumbnailUrl)
-                    .allowHardware(false)
-                    .size(160)
-                    .build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(48.dp)
-                    .graphicsLayer {
-                        scaleX = blurScale
-                        scaleY = blurScale
-                        alpha = 0.95f
-                    }
-            )
+        key(track.id) {
+            val ambientFrame = audioAmbientFrame
+            if (ambientFrame != null) {
+                Image(
+                    bitmap = ambientFrame,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(48.dp)
+                        .graphicsLayer {
+                            scaleX = blurScale
+                            scaleY = blurScale
+                            alpha = 0.95f
+                        }
+                )
+            } else {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(track.thumbnailUrl?.highQualityThumbnail() ?: track.thumbnailUrl)
+                        .allowHardware(false)
+                        .size(160)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(48.dp)
+                        .graphicsLayer {
+                            scaleX = blurScale
+                            scaleY = blurScale
+                            alpha = 0.95f
+                        }
+                )
+            }
         }
 
         // ── 2. Luminous Scrim Gradient (Background Scrim Overlay - Rich Colors, never pitch black) ──
@@ -614,12 +607,10 @@ fun IosStyledPlayer(
                 AndroidView(
                     factory = { ctx ->
                         TextureView(ctx).apply {
-                            activeTextureView = this
                             videoPlayer.setVideoTextureView(this)
                         }
                     },
                     update = {
-                        activeTextureView = it
                         videoPlayer.setVideoTextureView(it)
                     },
                     modifier = Modifier
@@ -689,12 +680,10 @@ fun IosStyledPlayer(
                         AndroidView(
                             factory = { ctx ->
                                 TextureView(ctx).apply {
-                                    activeTextureView = this
                                     videoPlayer.setVideoTextureView(this)
                                 }
                             },
                             update = {
-                                activeTextureView = it
                                 videoPlayer.setVideoTextureView(it)
                             },
                             modifier = Modifier
