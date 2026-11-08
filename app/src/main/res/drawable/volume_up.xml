@@ -1,10 +1,30 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:autoMirrored="true"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Speaker -->
     <path
-        android:fillColor="@android:color/white"
-        android:pathData="M560,829L560,747Q650,721 705,647Q760,573 760,479Q760,385 705,311Q650,237 560,211L560,129Q684,157 762,254.5Q840,352 840,479Q840,606 762,703.5Q684,801 560,829ZM120,600L120,360L280,360L480,160L480,800L280,600L120,600ZM560,640L560,318Q607,340 633.5,384Q660,428 660,480Q660,531 633.5,574.5Q607,618 560,640Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M3,9V15H7L12,19V5L7,9H3Z"/>
+
+    <!-- Inner sound wave -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M15,9C16.65,10.65 16.65,13.35 15,15"/>
+
+    <!-- Outer sound wave -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18,6C21.3,9.3 21.3,14.7 18,18"/>
+
 </vector>

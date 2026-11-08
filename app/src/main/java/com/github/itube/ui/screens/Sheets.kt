@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.WatchLater
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -739,5 +740,14 @@ fun AppearanceSettings() {
                 }
             }
         }
+        Spacer(Modifier.height(24.dp))
+        HorizontalDivider(color = c.outlineVariant.copy(alpha = 0.35f))
+        Spacer(Modifier.height(14.dp))
+        SettingSwitchRow(
+            title = "Blur effects",
+            line = if (BlurSetting.enabled) "Frosted blur applied to navigation bar, mini player, and popups" else "Use frosted blur effects on navigation bar and mini player",
+            checked = BlurSetting.enabled,
+            onCheckedChange = { BlurSetting.set(context, it) }
+        )
     }
 }

@@ -1,9 +1,12 @@
 package com.github.itube.ui.player
 
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.net.Uri
 import android.view.HapticFeedbackConstants
 import android.view.TextureView
@@ -15,8 +18,12 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.offset
@@ -74,6 +81,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
@@ -152,7 +162,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1304,9 +1317,11 @@ fun IosStyledPlayer(
                             modifier = Modifier.size(14.dp)
                         )
                         Text(
-                            text = "YouTube • 128k",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
-                            color = Color.White.copy(alpha = 0.90f)
+                            text = buildAnnotatedString {
+                                withStyle(SpanStyle(color = Color(0xFFFF1744))) { append("i") }
+                                withStyle(SpanStyle(color = Color.White)) { append("Music • 128k") }
+                            },
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium)
                         )
                     }
                 }
@@ -1388,7 +1403,14 @@ fun IosStyledPlayer(
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(16.dp))
+
+            // ── Volume Seek Bar (iOS Capsule Style) ──
+            IosVolumeSlider(
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+
+            Spacer(Modifier.height(16.dp))
 
             // ── Bottom Action Controls (Queue, Lyrics, YouTube Pill) ──
             Row(
@@ -2526,5 +2548,181 @@ private fun InPlayerQueueContent(
                 }
             }
         }
+    }
+}
+
+/**
+ * iOS-styled Capsule Volume Seek Bar matching Apple Music / AirStream aesthetic.
+ * Seamlessly synchronizes with system stream volume and hardware volume buttons.
+ */
+@Composable
+private fun IosVolumeSlider(
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
+    val maxVolume = remember(audioManager) { (audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15).coerceAtLeast(1) }
+
+    var currentVolume by remember(audioManager) {
+        mutableIntStateOf(audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: (maxVolume / 2))
+    }
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf((currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f)) }
+
+    // Synchronize with device volume rocker
+    DisposableEffect(context, audioManager, maxVolume) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (!isDragging && audioManager != null) {
+                    val vol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    currentVolume = vol
+                    dragFraction = (vol.toFloat() / maxVolume).coerceIn(0f, 1f)
+                }
+            }
+        }
+        val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+        try {
+            context.registerReceiver(receiver, filter)
+        } catch (_: Exception) {}
+        onDispose {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: Exception) {}
+        }
+    }
+
+    val displayFraction = if (isDragging) dragFraction else (currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f)
+    val animatedFraction by animateFloatAsState(
+        targetValue = displayFraction,
+        animationSpec = if (isDragging) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+        label = "volumeFraction"
+    )
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Min / Mute icon
+        Icon(
+            imageVector = if (currentVolume == 0) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeDown,
+            contentDescription = "Mute Volume",
+            tint = Color.White.copy(alpha = 0.65f),
+            modifier = Modifier
+                .size(19.dp)
+                .clickable {
+                    if (audioManager != null) {
+                        if (currentVolume > 0) {
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                            currentVolume = 0
+                            dragFraction = 0f
+                        } else {
+                            val target = (maxVolume * 0.25f).roundToInt().coerceAtLeast(1)
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+                            currentVolume = target
+                            dragFraction = target.toFloat() / maxVolume
+                        }
+                    }
+                }
+        )
+
+        Spacer(Modifier.width(12.dp))
+
+        // iOS Capsule Slider Track
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .height(28.dp)
+                .pointerInput(maxVolume) {
+                    detectTapGestures { offset ->
+                        val w = size.width.toFloat()
+                        if (w > 0f) {
+                            val fraction = (offset.x / w).coerceIn(0f, 1f)
+                            val targetVol = (fraction * maxVolume).roundToInt()
+                            audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                            currentVolume = targetVol
+                            dragFraction = fraction
+                        }
+                    }
+                }
+                .pointerInput(maxVolume) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            isDragging = true
+                            val w = size.width.toFloat()
+                            if (w > 0f) {
+                                val fraction = (offset.x / w).coerceIn(0f, 1f)
+                                dragFraction = fraction
+                                val targetVol = (fraction * maxVolume).roundToInt()
+                                audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                currentVolume = targetVol
+                            }
+                        },
+                        onDragEnd = {
+                            isDragging = false
+                            val targetVol = (dragFraction * maxVolume).roundToInt()
+                            audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                            currentVolume = targetVol
+                        },
+                        onDragCancel = {
+                            isDragging = false
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            change.consume()
+                            val w = size.width.toFloat()
+                            if (w > 0f) {
+                                val fraction = (change.position.x / w).coerceIn(0f, 1f)
+                                dragFraction = fraction
+                                val targetVol = (fraction * maxVolume).roundToInt()
+                                if (targetVol != currentVolume) {
+                                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetVol, 0)
+                                    currentVolume = targetVol
+                                }
+                            }
+                        }
+                    )
+                },
+            contentAlignment = Alignment.CenterStart
+        ) {
+            val trackHeight = 7.5.dp
+            val trackShape = RoundedCornerShape(percent = 50)
+
+            // Inactive Background Track (Translucent white)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(trackHeight)
+                    .clip(trackShape)
+                    .background(Color.White.copy(alpha = 0.22f))
+            )
+
+            // Active Track Fill (Solid light silver / white fill)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(animatedFraction)
+                    .height(trackHeight)
+                    .clip(trackShape)
+                    .background(Color.White.copy(alpha = 0.82f))
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        // Max volume icon
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
+            contentDescription = "Max Volume",
+            tint = Color.White.copy(alpha = 0.65f),
+            modifier = Modifier
+                .size(19.dp)
+                .clickable {
+                    if (audioManager != null) {
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
+                        currentVolume = maxVolume
+                        dragFraction = 1f
+                    }
+                }
+        )
     }
 }

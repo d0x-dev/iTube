@@ -268,7 +268,7 @@ private fun AccountSettingsHome(
         Spacer(Modifier.height(28.dp))
         Text("Settings", modifier = Modifier.fillMaxWidth(), fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
         Spacer(Modifier.height(10.dp))
-        SettingsEntry(R.drawable.settings_appearance, "Appearance", "Theme, colours and AMOLED") { onOpen(SettingsDetail.Appearance) }
+        SettingsEntry(R.drawable.settings_appearance, "Appearance", "Theme, colours, blur effects and AMOLED") { onOpen(SettingsDetail.Appearance) }
         SettingsEntry(R.drawable.settings_captions, "Captions", "Language, style and translation") { onOpen(SettingsDetail.Captions) }
         SettingsEntry(R.drawable.settings_sponsorblock, "SponsorBlock", "Skip sponsors and other segments") { onOpen(SettingsDetail.SponsorBlock) }
         SettingsEntry(R.drawable.settings_player, "Player controls", "Video control preferences") { onOpen(SettingsDetail.Player) }

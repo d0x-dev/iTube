@@ -357,9 +357,12 @@ object MusicPlayerState : Player.Listener {
                                     queue.addAll(radio)
                                     queueIndex = 0
                                     MusicPlaybackService.refreshCustomLayout()
+                                    preCacheNextTrack()
                                 }
                             }
                         }
+                    } else {
+                        preCacheNextTrack()
                     }
                     return@launch
                 }
@@ -410,9 +413,12 @@ object MusicPlayerState : Player.Listener {
                                     queue.addAll(radio)
                                     queueIndex = 0
                                     MusicPlaybackService.refreshCustomLayout()
+                                    preCacheNextTrack()
                                 }
                             }
                         }
+                    } else {
+                        preCacheNextTrack()
                     }
                 }
             } catch (e: Exception) {
@@ -742,6 +748,15 @@ object MusicPlayerState : Player.Listener {
     fun nextUpTrack(): MusicTrack? {
         val nextIdx = queueIndex + 1
         return if (nextIdx in queue.indices) queue[nextIdx] else null
+    }
+
+    fun preCacheNextTrack() {
+        val next = nextUpTrack() ?: return
+        if (!MusicCacheManager.isTrackCached(next.id)) {
+            scope.launch(Dispatchers.IO) {
+                MusicCacheManager.cacheTrackOnDemand(next)
+            }
+        }
     }
 
     private fun pauseVideoPlayerIfPlaying() {

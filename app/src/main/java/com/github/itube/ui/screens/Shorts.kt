@@ -47,6 +47,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsNone
@@ -354,6 +356,18 @@ class ShortsState(context: Context, private val scope: CoroutineScope) {
         private set
     var buffering by mutableStateOf(false)
         private set
+    var isMuted by mutableStateOf(false)
+        private set
+
+    fun toggleMute() {
+        applyMute(!isMuted)
+    }
+
+    fun applyMute(muted: Boolean) {
+        isMuted = muted
+        val vol = if (muted) 0f else 1f
+        pool.forEach { it.exo.volume = vol }
+    }
     /** How far into the short on screen, 0..1 (the line along the screen's bottom edge). */
     var progress by mutableFloatStateOf(0f)
         private set
@@ -1260,7 +1274,10 @@ internal class ShortPlayer(context: Context, private val state: ShortsState) {
             /* handleAudioFocus = */ true,
         )
         .build()
-        .apply { repeatMode = Player.REPEAT_MODE_ONE }
+        .apply {
+            repeatMode = Player.REPEAT_MODE_ONE
+            volume = if (state.isMuted) 0f else 1f
+        }
 
     var index = -1
         private set
@@ -1336,6 +1353,7 @@ internal class ShortPlayer(context: Context, private val state: ShortsState) {
         urls = streamUrls
         this.banked = banked
         exo.playbackParameters = PlaybackParameters(state.playbackSpeed)
+        exo.volume = if (state.isMuted) 0f else 1f
         exo.setMediaSource(source)
         exo.prepare()
     }
@@ -1497,7 +1515,7 @@ fun ShortsScreen(shorts: ShortsState, progress: () -> Float, overlayBottom: Dp) 
             exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { -it / 2 },
             modifier = Modifier.align(Alignment.TopCenter),
         ) {
-            ShortsHeader(onMore = { showMenu = true })
+            ShortsHeader(shorts = shorts, onMore = { showMenu = true })
         }
         val clipboard = LocalClipboardManager.current
         val context = LocalContext.current
@@ -1539,7 +1557,7 @@ fun ShortsScreen(shorts: ShortsState, progress: () -> Float, overlayBottom: Dp) 
 }
 
 @Composable
-private fun ShortsHeader(onMore: () -> Unit) {
+private fun ShortsHeader(shorts: ShortsState, onMore: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1557,16 +1575,31 @@ private fun ShortsHeader(onMore: () -> Unit) {
             fontWeight = FontWeight.Bold,
             style = LocalTextStyle.current.copy(shadow = Shadow(Color.Black.copy(alpha = 0.55f), Offset(0f, 2f), 5f)),
         )
-        Icon(
-            Icons.Rounded.MoreVert,
-            contentDescription = "Shorts options",
-            tint = Ink,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onMore)
-                .padding(5.dp),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = if (shorts.isMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                contentDescription = if (shorts.isMuted) "Unmute" else "Mute",
+                tint = Ink,
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable { shorts.toggleMute() }
+                    .padding(5.dp),
+            )
+            Icon(
+                Icons.Rounded.MoreVert,
+                contentDescription = "Shorts options",
+                tint = Ink,
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onMore)
+                    .padding(5.dp),
+            )
+        }
     }
 }
 

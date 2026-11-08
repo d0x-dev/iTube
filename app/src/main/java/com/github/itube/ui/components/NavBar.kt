@@ -76,6 +76,8 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import com.github.itube.ui.components.BlurSetting
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
@@ -257,7 +259,21 @@ internal fun NavPill(
                     ambientShadowColor = Color.Black
                     spotShadowColor = Color.Black
                 }
-                .drawBehind { drawRect(c.surfaceVariant, alpha = 1f - shortsBarFade(shorts())) }
+                .drawBehind {
+                    if (BlurSetting.enabled) {
+                        val dark = c.surface.luminance() < 0.5f
+                        val glassColor = if (dark) Color(0xFF252525).copy(alpha = 0.68f) else Color(0xFFF0F0F3).copy(alpha = 0.78f)
+                        val fade = 1f - shortsBarFade(shorts())
+                        drawRect(glassColor, alpha = fade)
+                        val highlightAlpha = (if (dark) 0.16f else 0.45f) * fade
+                        drawRect(
+                            color = Color.White.copy(alpha = highlightAlpha),
+                            size = Size(size.width, 1.dp.toPx())
+                        )
+                    } else {
+                        drawRect(c.surfaceVariant, alpha = 1f - shortsBarFade(shorts()))
+                    }
+                }
                 .playerBarGestures(bar, player, enabled = controlsActive, view = view, gate = gate, onPick = onPick),
         ) {
           CompositionLocalProvider(LocalContentColor provides c.onSurfaceVariant) {

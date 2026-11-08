@@ -58,6 +58,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import com.github.itube.ui.components.BlurSetting
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -161,6 +163,19 @@ fun NewClassicMiniPlayer(
                 )
             }
     ) {
+        val isBlurEnabled = BlurSetting.enabled
+        val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+        val miniPlayerBgColor = if (isBlurEnabled) {
+            if (isDark) Color(0xFF252525).copy(alpha = 0.68f) else Color(0xFFF0F0F3).copy(alpha = 0.78f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f)
+        }
+        val miniPlayerBorderColor = if (isBlurEnabled) {
+            if (isDark) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.45f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+        }
+
         // Inner sliding container
         Surface(
             modifier = Modifier
@@ -169,13 +184,13 @@ fun NewClassicMiniPlayer(
                 .shadow(elevation = 10.dp, shape = RoundedCornerShape(33.dp), spotColor = Color.Black.copy(alpha = 0.35f))
                 .border(
                     width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                    color = miniPlayerBorderColor,
                     shape = RoundedCornerShape(33.dp)
                 )
                 .clickable { onExpand() },
             shape = RoundedCornerShape(33.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f),
-            tonalElevation = 6.dp
+            color = miniPlayerBgColor,
+            tonalElevation = if (isBlurEnabled) 0.dp else 6.dp
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
