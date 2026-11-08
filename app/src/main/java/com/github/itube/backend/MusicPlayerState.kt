@@ -105,6 +105,7 @@ object MusicPlayerState : Player.Listener {
     // Video Mode & Companion Video Player
     var isVideoMode by mutableStateOf(false)
     var isVideoFullscreen by mutableStateOf(false)
+    var videoFullscreenZoomMode by mutableIntStateOf(0)
     var selectedVideoQuality by mutableStateOf<Int?>(480)
     var companionVideoPlayer: ExoPlayer? = null
         private set
@@ -131,6 +132,7 @@ object MusicPlayerState : Player.Listener {
         companionVideoPlayer = null
         isVideoMode = false
         isVideoFullscreen = false
+        videoFullscreenZoomMode = 0
     }
 
     var lyrics by mutableStateOf<List<LyricsLine>>(emptyList())
@@ -499,6 +501,7 @@ object MusicPlayerState : Player.Listener {
         lyricsLoading = false
         isVideoMode = false
         isVideoFullscreen = false
+        videoFullscreenZoomMode = 0
         stopSystemMediaSession()
     }
 

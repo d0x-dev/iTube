@@ -45,6 +45,7 @@ import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.WatchLater
@@ -128,6 +129,25 @@ fun VideoOptionsSheet(
                 Text(video.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(video.channel, color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 1)
             }
+        }
+        OptionRow(Icons.Rounded.Headphones, "Play in iMusic") {
+            player.controller?.pause()
+            player.expanded = false
+            val track = MusicTrack(
+                id = video.id,
+                title = video.title,
+                artists = video.channel,
+                artistId = video.channelUrl,
+                thumbnailUrl = video.thumbnail,
+                durationSec = video.durationSec,
+                isVideo = false
+            )
+            MusicPlayerState.isVideoMode = false
+            MusicPlayerState.isVideoFullscreen = false
+            MusicPlayerState.videoFullscreenZoomMode = 0
+            MusicPlayerState.play(track)
+            MusicPlayerState.expanded = true
+            onDismiss()
         }
         OptionRow(Icons.Rounded.PlaylistPlay, "Play next") { player.playNext(video); onDismiss() }
         OptionRow(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to queue") { player.addToQueue(video); onDismiss() }

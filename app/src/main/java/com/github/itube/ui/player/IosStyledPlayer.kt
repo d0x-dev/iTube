@@ -13,9 +13,13 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -69,6 +73,8 @@ import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.ZoomIn
+import androidx.compose.material.icons.rounded.ZoomOutMap
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -274,9 +280,19 @@ fun IosStyledPlayer(
         }
     }
 
+    var zoomFeedbackText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(zoomFeedbackText) {
+        if (zoomFeedbackText != null) {
+            delay(1400)
+            zoomFeedbackText = null
+        }
+    }
+
     BackHandler(enabled = MusicPlayerState.expanded) {
         if (MusicPlayerState.isVideoFullscreen) {
             MusicPlayerState.isVideoFullscreen = false
+            MusicPlayerState.videoFullscreenZoomMode = 0
+            zoomFeedbackText = "Square Mode"
         } else {
             onCollapse()
         }
@@ -322,6 +338,17 @@ fun IosStyledPlayer(
     ) {
         // ── 1. Full Screen High Quality Artwork / Fullscreen Video Backdrop with Lower Blur Effect ──
         if (isVideoMode && isVideoFullscreen) {
+            val zoomMode = MusicPlayerState.videoFullscreenZoomMode
+            val scaleVal by animateFloatAsState(
+                targetValue = when (zoomMode) {
+                    0 -> 1.0f // Fit (own resolution)
+                    1 -> 1.0f // Fill (zoom to cover)
+                    else -> 1.28f // Deep zoom (bounded so key elements remain visible)
+                },
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.85f),
+                label = "fullscreenZoomScale"
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -339,7 +366,11 @@ fun IosStyledPlayer(
                     },
                     modifier = Modifier
                         .fillMaxSize()
-                        .aspectFit(videoAspect, cover = true)
+                        .aspectFit(videoAspect, cover = zoomMode >= 1)
+                        .graphicsLayer {
+                            scaleX = scaleVal
+                            scaleY = scaleVal
+                        }
                 )
             }
         } else {
@@ -486,7 +517,12 @@ fun IosStyledPlayer(
                     Surface(
                         shape = CircleShape,
                         color = Color.Black.copy(alpha = 0.65f),
-                        onClick = { MusicPlayerState.isVideoFullscreen = true },
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            MusicPlayerState.videoFullscreenZoomMode = 0
+                            MusicPlayerState.isVideoFullscreen = true
+                            zoomFeedbackText = "Original Fit"
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(10.dp)
@@ -532,7 +568,10 @@ fun IosStyledPlayer(
                 onToggle = { toVideo ->
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     MusicPlayerState.isVideoMode = toVideo
-                    if (!toVideo) MusicPlayerState.isVideoFullscreen = false
+                    if (!toVideo) {
+                        MusicPlayerState.isVideoFullscreen = false
+                        MusicPlayerState.videoFullscreenZoomMode = 0
+                    }
                 },
                 modifier = Modifier.align(Alignment.Center)
             )
@@ -543,12 +582,38 @@ fun IosStyledPlayer(
             ) {
                 if (isVideoMode && isVideoFullscreen) {
                     IconButton(
-                        onClick = { MusicPlayerState.isVideoFullscreen = false },
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            when (MusicPlayerState.videoFullscreenZoomMode) {
+                                0 -> {
+                                    MusicPlayerState.videoFullscreenZoomMode = 1
+                                    zoomFeedbackText = "Zoom to Fill"
+                                }
+                                1 -> {
+                                    MusicPlayerState.videoFullscreenZoomMode = 2
+                                    zoomFeedbackText = "Zoom 1.3×"
+                                }
+                                else -> {
+                                    MusicPlayerState.videoFullscreenZoomMode = 0
+                                    MusicPlayerState.isVideoFullscreen = false
+                                    zoomFeedbackText = "Square Mode"
+                                }
+                            }
+                        },
                         modifier = Modifier.size(40.dp)
                     ) {
+                        val icon = when (MusicPlayerState.videoFullscreenZoomMode) {
+                            0 -> Icons.Rounded.ZoomOutMap
+                            1 -> Icons.Rounded.ZoomIn
+                            else -> Icons.Rounded.FullscreenExit
+                        }
                         Icon(
-                            imageVector = Icons.Rounded.FullscreenExit,
-                            contentDescription = "Exit Fullscreen",
+                            imageVector = icon,
+                            contentDescription = when (MusicPlayerState.videoFullscreenZoomMode) {
+                                0 -> "Zoom to Fill"
+                                1 -> "Deep Zoom"
+                                else -> "Return to Square"
+                            },
                             tint = Color.White.copy(alpha = 0.95f),
                             modifier = Modifier.size(26.dp)
                         )
@@ -566,6 +631,32 @@ fun IosStyledPlayer(
                         modifier = Modifier.size(28.dp)
                     )
                 }
+            }
+        }
+
+        // ── Zoom Mode Feedback Pill ──
+        AnimatedVisibility(
+            visible = zoomFeedbackText != null,
+            enter = fadeIn(tween(150)) + slideInVertically(tween(150)) { -it / 2 },
+            exit = fadeOut(tween(250)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 58.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.78f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+                shadowElevation = 6.dp
+            ) {
+                Text(
+                    text = zoomFeedbackText.orEmpty(),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                )
             }
         }
 
