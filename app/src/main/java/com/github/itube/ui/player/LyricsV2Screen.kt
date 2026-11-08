@@ -116,6 +116,23 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
 
+private fun unescapeLyricsHtml(text: String): String {
+    if (!text.contains('&')) return text
+    return try {
+        android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+    } catch (_: Throwable) {
+        text
+            .replace("&#39;", "'")
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&apos;", "'")
+            .replace("&#x27;", "'")
+            .replace("&#039;", "'")
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // AirBeats Lyrics Constants
 // ──────────────────────────────────────────────────────────────────────
@@ -586,21 +603,23 @@ internal fun AirBeatsLyricsV2Content(
     val entriesWithWords: List<AirBeatsLyricsEntry> = remember(lyrics) {
         if (lyrics.isEmpty()) return@remember emptyList()
         val mapped = lyrics.mapIndexed { index, line ->
+            val cleanLineText = unescapeLyricsHtml(line.text)
             val nextTime = if (index < lyrics.lastIndex) lyrics[index + 1].timeMs else line.timeMs + 5000L
             val lineDurationMs = (nextTime - line.timeMs).coerceAtLeast(600L)
 
             val words = if (line.words.isNotEmpty()) {
                 line.words.map { w ->
+                    val cleanWord = unescapeLyricsHtml(w.text)
                     AirBeatsWordTimestamp(
-                        text = if (w.text.endsWith(" ")) w.text else "${w.text} ",
+                        text = if (cleanWord.endsWith(" ")) cleanWord else "$cleanWord ",
                         startTime = w.startMs / 1000.0,
                         endTime = w.endMs / 1000.0
                     )
                 }
             } else {
-                synthesizeWordTimestamps(line.text, line.timeMs, lineDurationMs)
+                synthesizeWordTimestamps(cleanLineText, line.timeMs, lineDurationMs)
             }
-            AirBeatsLyricsEntry(time = line.timeMs, text = line.text, words = words)
+            AirBeatsLyricsEntry(time = line.timeMs, text = cleanLineText, words = words)
         }
         listOf(HEAD_LYRICS_ENTRY) + mapped
     }

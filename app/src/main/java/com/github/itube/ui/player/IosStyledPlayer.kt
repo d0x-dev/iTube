@@ -25,6 +25,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.zIndex
+import kotlin.math.abs
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -332,7 +334,7 @@ fun IosStyledPlayer(
 
     val panelProgress by animateFloatAsState(
         targetValue = if (isPanelOpen) 1f else 0f,
-        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
         label = "panelProgress"
     )
 
@@ -448,73 +450,9 @@ fun IosStyledPlayer(
         val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val fullBleedHeight = maxHeight * 0.52f
 
-        // ── 1. Continuous Morphing Artwork Avatar (Full Bleed at Top -> Mini Thumbnail at Top-Left) ──
-        if (!isVideoMode || !isVideoFullscreen) {
-            val artTop = lerpDp(0.dp, statusBarTopDp + 8.dp, panelProgress)
-            val artStart = lerpDp(0.dp, 16.dp, panelProgress)
-            val artWidth = lerpDp(maxWidth, 44.dp, panelProgress)
-            val artHeight = lerpDp(fullBleedHeight, 44.dp, panelProgress)
-            val artRadius = lerpDp(0.dp, 10.dp, panelProgress)
-
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(artStart.roundToPx(), artTop.roundToPx()) }
-                    .size(width = artWidth, height = artHeight)
-                    .clip(RoundedCornerShape(artRadius))
-                    .then(
-                        if (panelProgress > 0.85f) {
-                            Modifier
-                                .border(1.dp, Color.White.copy(alpha = 0.22f * panelProgress), RoundedCornerShape(artRadius))
-                                .clickable {
-                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                    MusicPlayerState.lyricsOpen = false
-                                    MusicPlayerState.queueOpen = false
-                                }
-                        } else Modifier
-                    )
-            ) {
-                AsyncImage(
-                    model = track.thumbnailUrl?.highQualityThumbnail(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .drawWithCache {
-                            // In full music player mode, gently blend the bottom edge with the ambient background;
-                            // when morphing, keep the avatar 100% visible with no transparency masking so it zooms out smoothly.
-                            val bottomFadeAlpha = (1f - panelProgress * 6f).coerceIn(0f, 1f)
-                            val gradientMask = Brush.verticalGradient(
-                                colorStops = arrayOf(
-                                    0f to Color.Black,
-                                    0.55f to Color.Black,
-                                    1f to Color.Transparent
-                                )
-                            )
-                            onDrawWithContent {
-                                drawContent()
-                                if (bottomFadeAlpha > 0.001f) {
-                                    drawRect(
-                                        brush = gradientMask,
-                                        blendMode = BlendMode.DstIn
-                                    )
-                                }
-                            }
-                        }
-                )
-            }
-        }
-
-        // ── 2. Ambient Blurred Artwork Layer (Visibly moves UP from bottom to fill the entire screen in Lyrics / Queue Mode) ──
-        val blurTranslateY by animateDpAsState(
-            targetValue = if (isPanelOpen) 0.dp else 220.dp,
-            animationSpec = tween(420, easing = FastOutSlowInEasing),
-            label = "blurTranslateY"
-        )
-        val blurMaskStart by animateFloatAsState(
-            targetValue = if (isPanelOpen) 0f else 0.40f,
-            animationSpec = tween(420, easing = FastOutSlowInEasing),
-            label = "blurMaskStart"
-        )
+        // ── 1. Ambient Blurred Artwork Layer (Background - Hardware Accelerated 120 FPS) ──
+        val blurAlpha = lerpFloat(0.48f, 0.88f, panelProgress)
+        val blurScale = lerpFloat(1.10f, 1.25f, panelProgress)
 
         AsyncImage(
             model = track.thumbnailUrl?.highQualityThumbnail(),
@@ -522,32 +460,15 @@ fun IosStyledPlayer(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .offset(y = blurTranslateY)
-                .blur(80.dp)
+                .blur(45.dp)
                 .graphicsLayer {
-                    scaleX = 1.25f
-                    scaleY = 1.25f
-                    compositingStrategy = CompositingStrategy.Offscreen
-                }
-                .drawWithCache {
-                    val mask = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0f to Color.Transparent,
-                            blurMaskStart to Color.Transparent,
-                            (blurMaskStart + 0.15f).coerceAtMost(1f) to Color.Black,
-                            1f to Color.Black
-                        )
-                    )
-                    onDrawWithContent {
-                        drawContent()
-                        if (panelProgress < 0.99f) {
-                            drawRect(brush = mask, blendMode = BlendMode.DstIn)
-                        }
-                    }
+                    scaleX = blurScale
+                    scaleY = blurScale
+                    alpha = blurAlpha
                 }
         )
 
-        // ── 3. Luminous Scrim Gradient (Vibrant colors, no dark muddy overlay) ──
+        // ── 2. Luminous Scrim Gradient (Background Scrim Overlay) ──
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -758,6 +679,7 @@ fun IosStyledPlayer(
         if (isLyricsOpen && panelProgress > 0.001f) {
             Box(
                 modifier = Modifier
+                    .zIndex(5f)
                     .fillMaxSize()
                     .statusBarsPadding()
                     .padding(top = 66.dp)
@@ -792,6 +714,7 @@ fun IosStyledPlayer(
         if (isQueueOpen && panelProgress > 0.001f) {
             Box(
                 modifier = Modifier
+                    .zIndex(5f)
                     .fillMaxSize()
                     .statusBarsPadding()
                     .padding(top = 66.dp)
@@ -823,9 +746,66 @@ fun IosStyledPlayer(
             }
         }
 
+        // ── Continuous Morphing Artwork Avatar (Full Bleed at Top -> Mini Thumbnail at Top-Left) ──
+        if (!isVideoMode || !isVideoFullscreen) {
+            val artTop = lerpDp(0.dp, statusBarTopDp + 6.dp, panelProgress)
+            val artStart = lerpDp(0.dp, 16.dp, panelProgress)
+            val artWidth = lerpDp(maxWidth, 44.dp, panelProgress)
+            val artHeight = lerpDp(fullBleedHeight, 44.dp, panelProgress)
+            val artRadius = lerpDp(0.dp, 10.dp, panelProgress)
+
+            Box(
+                modifier = Modifier
+                    .zIndex(20f)
+                    .offset { IntOffset(artStart.roundToPx(), artTop.roundToPx()) }
+                    .size(width = artWidth, height = artHeight)
+                    .clip(RoundedCornerShape(artRadius))
+                    .then(
+                        if (panelProgress > 0.85f) {
+                            Modifier
+                                .border(1.dp, Color.White.copy(alpha = 0.22f * panelProgress), RoundedCornerShape(artRadius))
+                                .clickable {
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    MusicPlayerState.lyricsOpen = false
+                                    MusicPlayerState.queueOpen = false
+                                }
+                        } else Modifier
+                    )
+            ) {
+                AsyncImage(
+                    model = track.thumbnailUrl?.highQualityThumbnail(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // In full music player mode, gently blend the bottom edge with the ambient background;
+                // this overlay smoothly fades out immediately as panelProgress starts,
+                // ensuring the avatar image is 100% complete and never has a cut-off lower edge!
+                if (panelProgress < 0.25f) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(fullBleedHeight * 0.40f)
+                            .graphicsLayer {
+                                alpha = (1f - panelProgress * 4f).coerceIn(0f, 1f)
+                            }
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    1f to Color.Black
+                                )
+                            )
+                    )
+                }
+            }
+        }
+
         // ── Top Navigation Bar (Collapse Chevron, Centered Switch Pill, More Menu, In-Player Header) ──
         Box(
             modifier = Modifier
+                .zIndex(25f)
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -938,7 +918,7 @@ fun IosStyledPlayer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 54.dp, end = 48.dp)
+                        .padding(start = 70.dp, end = 52.dp)
                         .align(Alignment.CenterStart)
                         .graphicsLayer {
                             alpha = panelProgress
@@ -1017,6 +997,7 @@ fun IosStyledPlayer(
         // ── 3. Bottom Controls Anchored Column ──
         Column(
             modifier = Modifier
+                .zIndex(25f)
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .navigationBarsPadding()
@@ -1028,120 +1009,124 @@ fun IosStyledPlayer(
                 },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Keep the actions fixed in their existing row.  The metadata sits just above it,
-            // spanning the screen so a long title is not squeezed beside four buttons.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp)
-            ) {
-                Column(
+            // In music mode, show the track title, artist, and action buttons (Like, Dislike, Comment, Share).
+            // When in lyrics or queue mode, this row cleanly fades out so the controls remain compact and unobtrusive.
+            val metaRowAlpha = (1f - panelProgress * 2.5f).coerceIn(0f, 1f)
+            if (metaRowAlpha > 0.001f) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // The action row is intentionally only 42 dp tall.  Let metadata use
-                        // its real two-line height instead of measuring it into that row and
-                        // clipping the artist's descenders.
-                        .wrapContentHeight(unbounded = true)
-                        .padding(end = 4.dp)
-                        .align(Alignment.TopStart)
-                        // Sit just above the button row with tight breathing space, avoiding the high floating gap.
-                        .graphicsLayer {
-                            translationY = -50.dp.toPx()
-                            alpha = (1f - panelProgress).coerceIn(0f, 1f)
-                        }
-                        .onGloballyPositioned { coords ->
-                            val root = rootBoxCoords
-                            if (root != null && root.isAttached && coords.isAttached) {
-                                val pos = root.localPositionOf(coords, Offset.Zero)
-                                val titleVisualTop = pos.y - with(density) { 50.dp.toPx() }
-                                val bottomPx = (root.size.height - titleVisualTop).coerceAtLeast(0f)
-                                if (bottomPx > 0f) {
-                                    titleBottomPadding = with(density) { bottomPx.toDp() }.coerceAtLeast(0.dp)
+                        .height(42.dp)
+                        .graphicsLayer { alpha = metaRowAlpha }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .wrapContentHeight(unbounded = true)
+                            .padding(end = 4.dp)
+                            .align(Alignment.TopStart)
+                            .graphicsLayer {
+                                translationY = -50.dp.toPx()
+                            }
+                            .onGloballyPositioned { coords ->
+                                if (!isPanelOpen && panelProgress < 0.01f) {
+                                    val root = rootBoxCoords
+                                    if (root != null && root.isAttached && coords.isAttached) {
+                                        val pos = root.localPositionOf(coords, Offset.Zero)
+                                        val titleVisualTop = pos.y - with(density) { 50.dp.toPx() }
+                                        val bottomPx = (root.size.height - titleVisualTop).coerceAtLeast(0f)
+                                        if (bottomPx > 0f) {
+                                            val newDp = with(density) { bottomPx.toDp() }.coerceAtLeast(0.dp)
+                                            if (abs(titleBottomPadding.value - newDp.value) > 2f) {
+                                                titleBottomPadding = newDp
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        }
-                ) {
-                    Text(
-                        text = track.title,
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 24.sp,
-                            lineHeight = 28.sp,
-                            letterSpacing = (-0.2).sp
-                        ),
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee()
-                    )
-                    Spacer(Modifier.height(1.dp))
-                    Text(
-                        text = track.artists,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
-                        color = Color.White.copy(alpha = 0.72f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee()
-                    )
-                }
+                    ) {
+                        Text(
+                            text = track.title,
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 24.sp,
+                                lineHeight = 28.sp,
+                                letterSpacing = (-0.2).sp
+                            ),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.basicMarquee()
+                        )
+                        Spacer(Modifier.height(1.dp))
+                        Text(
+                            text = track.artists,
+                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp),
+                            color = Color.White.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.basicMarquee()
+                        )
+                    }
 
-                // The buttons deliberately retain their size and on-screen position (Right aligned!)
-                Row(
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 1. Like
-                    ImmersiveCircleActionButton(
-                        icon = if (isLiked) R.drawable.yt_fill_experimental_thumb_up_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_up_vd_theme_24,
-                        isActive = isLiked,
-                        contentDescription = "Like",
-                        onClick = {
-                            onLyricsInteraction()
-                            MusicPlayerState.toggleLike()
-                        }
-                    )
-
-                    // 2. Dislike / Unlike
-                    ImmersiveCircleActionButton(
-                        icon = if (isDisliked) R.drawable.yt_fill_experimental_thumb_down_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_down_vd_theme_24,
-                        isActive = isDisliked,
-                        contentDescription = "Dislike",
-                        onClick = {
-                            onLyricsInteraction()
-                            isDisliked = !isDisliked
-                        }
-                    )
-
-                    // 3. Comment
-                    ImmersiveCircleActionButton(
-                        icon = R.drawable.ic_comment,
-                        isActive = commentsOpen,
-                        contentDescription = "Comments",
-                        onClick = {
-                            onLyricsInteraction()
-                            commentsOpen = true
-                        }
-                    )
-
-                    // 4. Share
-                    ImmersiveCircleActionButton(
-                        icon = R.drawable.ic_share,
-                        isActive = false,
-                        contentDescription = "Share",
-                        onClick = {
-                            onLyricsInteraction()
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.id}")
-                                type = "text/plain"
+                    // The buttons deliberately retain their size and on-screen position (Right aligned!)
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1. Like
+                        ImmersiveCircleActionButton(
+                            icon = if (isLiked) R.drawable.yt_fill_experimental_thumb_up_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_up_vd_theme_24,
+                            isActive = isLiked,
+                            contentDescription = "Like",
+                            onClick = {
+                                onLyricsInteraction()
+                                MusicPlayerState.toggleLike()
                             }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share Music"))
-                        }
-                    )
-                }
-            }
+                        )
 
-            Spacer(Modifier.height(28.dp))
+                        // 2. Dislike / Unlike
+                        ImmersiveCircleActionButton(
+                            icon = if (isDisliked) R.drawable.yt_fill_experimental_thumb_down_vd_theme_24 else R.drawable.yt_outline_experimental_thumb_down_vd_theme_24,
+                            isActive = isDisliked,
+                            contentDescription = "Dislike",
+                            onClick = {
+                                onLyricsInteraction()
+                                isDisliked = !isDisliked
+                            }
+                        )
+
+                        // 3. Comment
+                        ImmersiveCircleActionButton(
+                            icon = R.drawable.ic_comment,
+                            isActive = commentsOpen,
+                            contentDescription = "Comments",
+                            onClick = {
+                                onLyricsInteraction()
+                                commentsOpen = true
+                            }
+                        )
+
+                        // 4. Share
+                        ImmersiveCircleActionButton(
+                            icon = R.drawable.ic_share,
+                            isActive = false,
+                            contentDescription = "Share",
+                            onClick = {
+                                onLyricsInteraction()
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${track.id}")
+                                    type = "text/plain"
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share Music"))
+                            }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(28.dp))
+            }
 
             // ── Wavy Seek Bar (AirBeats Expressive Squiggly Slider) ──
             WavySlider(

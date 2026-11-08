@@ -183,6 +183,22 @@ object LyricsHelper {
         parsed
     }
 
+    private fun unescapeHtml(text: String): String {
+        if (!text.contains('&')) return text
+        return try {
+            android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+        } catch (_: Throwable) {
+            text.replace("&#39;", "'")
+                .replace("&#039;", "'")
+                .replace("&apos;", "'")
+                .replace("&#x27;", "'")
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+        }
+    }
+
     /** Parses standard LRC format into synchronized [LyricsLine] with estimated word timings. */
     fun parseLrc(lrcText: String): List<LyricsLine> {
         val lines = mutableListOf<LyricsLine>()
@@ -202,7 +218,8 @@ object LyricsHelper {
                     else -> msStr.take(3).toLong()
                 }
                 val timeMs = min * 60000L + sec * 1000L + ms
-                val text = matcher.group(4)?.trim().orEmpty()
+                val rawText = matcher.group(4)?.trim().orEmpty()
+                val text = unescapeHtml(rawText)
                 if (text.isNotBlank()) {
                     lines.add(LyricsLine(timeMs = timeMs, text = text))
                 }
