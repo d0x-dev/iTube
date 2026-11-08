@@ -72,12 +72,13 @@ afterEvaluate {
             val dir = layout.buildDirectory.dir("outputs/apk/debug").get().asFile
             if (dir.exists()) {
                 dir.listFiles { _, name -> name.endsWith(".apk") && !name.startsWith("iTube") }?.forEach { apk ->
-                    val cleanName = apk.name
-                        .replace("app-", "iTube-")
-                        .replace("-debug", "")
+                    val debugName = apk.name.replace("app-", "iTube-")
+                    val cleanName = debugName.replace("-debug", "")
                     apk.copyTo(File(dir, cleanName), overwrite = true)
+                    apk.copyTo(File(dir, debugName), overwrite = true)
                     if (apk.name.contains("universal") || apk.name == "app-debug.apk") {
                         apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
+                        apk.copyTo(File(dir, "iTube-debug.apk"), overwrite = true)
                     }
                 }
             }
@@ -95,15 +96,18 @@ afterEvaluate {
             targetDir.mkdirs()
             if (dir.exists()) {
                 dir.listFiles { _, name -> name.endsWith(".apk") && !name.startsWith("iTube") }?.forEach { apk ->
-                    val cleanName = apk.name
-                        .replace("app-", "iTube-")
-                        .replace("-release", "")
+                    val releaseName = apk.name.replace("app-", "iTube-")
+                    val cleanName = releaseName.replace("-release", "")
                     apk.copyTo(File(dir, cleanName), overwrite = true)
+                    apk.copyTo(File(dir, releaseName), overwrite = true)
                     apk.copyTo(File(targetDir, cleanName), overwrite = true)
+                    apk.copyTo(File(targetDir, releaseName), overwrite = true)
                     apk.copyTo(File(targetDir, apk.name), overwrite = true)
                     if (apk.name.contains("universal") || apk.name == "app-release.apk") {
                         apk.copyTo(File(dir, "iTube.apk"), overwrite = true)
+                        apk.copyTo(File(dir, "iTube-release.apk"), overwrite = true)
                         apk.copyTo(File(targetDir, "iTube.apk"), overwrite = true)
+                        apk.copyTo(File(targetDir, "iTube-release.apk"), overwrite = true)
                         apk.copyTo(File(targetDir, "app-release.apk"), overwrite = true)
                     }
                 }
