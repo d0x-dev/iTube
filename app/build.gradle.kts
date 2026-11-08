@@ -68,51 +68,9 @@ android {
     }
 }
 
-// Keep the standard assemble tasks, and also emit consistently named APKs for sharing.
+// Ensure clean output: keep only canonical iTube-{architecture}-release.apk artifacts and remove duplicates.
 afterEvaluate {
-    fun safeCopyApk(source: File, dest: File) {
-        if (source.canonicalPath != dest.canonicalPath) {
-            source.copyTo(dest, overwrite = true)
-        }
-    }
-
-    val copyDebugApk = tasks.register("copyDebugApkAsITube") {
-        mustRunAfter("packageDebug")
-        doLast {
-            val dir = layout.buildDirectory.dir("outputs/apk/debug").get().asFile
-            if (dir.exists()) {
-                val apks = dir.listFiles { _, name ->
-                    name.endsWith(".apk") &&
-                    (name.startsWith("iTube-") || name.startsWith("app-")) &&
-                    name.endsWith("-debug.apk")
-                } ?: emptyArray()
-
-                apks.forEach { apk ->
-                    val cleanAbi = apk.name
-                        .removePrefix("app-")
-                        .removePrefix("iTube-")
-                        .removeSuffix("-debug.apk")
-                    val isUniversal = cleanAbi == "universal" || apk.name == "app-debug.apk" || apk.name == "iTube-debug.apk"
-
-                    val debugName = if (isUniversal) "iTube-universal-debug.apk" else "iTube-$cleanAbi-debug.apk"
-                    val shortName = if (isUniversal) "iTube-universal.apk" else "iTube-$cleanAbi.apk"
-
-                    safeCopyApk(apk, File(dir, shortName))
-                    safeCopyApk(apk, File(dir, debugName))
-                    if (isUniversal) {
-                        safeCopyApk(apk, File(dir, "iTube.apk"))
-                        safeCopyApk(apk, File(dir, "iTube-debug.apk"))
-                    }
-                }
-            }
-        }
-    }
-    tasks.named("assembleDebug") {
-        finalizedBy(copyDebugApk)
-    }
-    tasks.named("packageDebug") {
-        finalizedBy(copyDebugApk)
-    }
+    val validReleaseApkRegex = Regex("""^iTube-(arm64-v8a|armeabi-v7a|universal|x86|x86_64)-release\.apk$""")
 
     val copyReleaseApk = tasks.register("copyReleaseApkAsITube") {
         mustRunAfter("packageRelease")
@@ -121,36 +79,23 @@ afterEvaluate {
             val targetDir = project.file("release")
             targetDir.mkdirs()
             if (dir.exists()) {
-                val apks = dir.listFiles { _, name ->
-                    name.endsWith(".apk") &&
-                    (name.startsWith("iTube-") || name.startsWith("app-")) &&
-                    name.endsWith("-release.apk")
-                } ?: emptyArray()
+                // Delete any duplicate / alias / obsolete APKs from build output dir
+                dir.listFiles { _, name ->
+                    name.endsWith(".apk") && !validReleaseApkRegex.matches(name)
+                }?.forEach { it.delete() }
 
-                apks.forEach { apk ->
-                    val cleanAbi = apk.name
-                        .removePrefix("app-")
-                        .removePrefix("iTube-")
-                        .removeSuffix("-release.apk")
-                    val isUniversal = cleanAbi == "universal" || apk.name == "app-release.apk" || apk.name == "iTube-release.apk"
+                // Clean any duplicate / alias / obsolete APKs from target release dir
+                targetDir.listFiles { _, name ->
+                    name.endsWith(".apk") && !validReleaseApkRegex.matches(name)
+                }?.forEach { it.delete() }
 
-                    val releaseName = if (isUniversal) "iTube-universal-release.apk" else "iTube-$cleanAbi-release.apk"
-                    val shortName = if (isUniversal) "iTube-universal.apk" else "iTube-$cleanAbi.apk"
-
-                    safeCopyApk(apk, File(dir, shortName))
-                    safeCopyApk(apk, File(dir, releaseName))
-                    safeCopyApk(apk, File(targetDir, shortName))
-                    safeCopyApk(apk, File(targetDir, releaseName))
-                    safeCopyApk(apk, File(targetDir, apk.name))
-                    if (isUniversal) {
-                        val legacySignedName = "iTube_v${android.defaultConfig.versionName}_signed.apk"
-                        safeCopyApk(apk, File(dir, "iTube.apk"))
-                        safeCopyApk(apk, File(dir, "iTube-release.apk"))
-                        safeCopyApk(apk, File(dir, legacySignedName))
-                        safeCopyApk(apk, File(targetDir, "iTube.apk"))
-                        safeCopyApk(apk, File(targetDir, "iTube-release.apk"))
-                        safeCopyApk(apk, File(targetDir, legacySignedName))
-                        safeCopyApk(apk, File(targetDir, "app-release.apk"))
+                // Copy only canonical iTube-*-release.apk files to app/release/
+                dir.listFiles { _, name ->
+                    validReleaseApkRegex.matches(name)
+                }?.forEach { apk ->
+                    val dest = File(targetDir, apk.name)
+                    if (apk.canonicalPath != dest.canonicalPath) {
+                        apk.copyTo(dest, overwrite = true)
                     }
                 }
             }
@@ -161,6 +106,26 @@ afterEvaluate {
     }
     tasks.named("packageRelease") {
         finalizedBy(copyReleaseApk)
+    }
+
+    val validDebugApkRegex = Regex("""^iTube-(arm64-v8a|armeabi-v7a|universal|x86|x86_64)-debug\.apk$""")
+
+    val cleanDebugApks = tasks.register("cleanDebugDuplicateApks") {
+        mustRunAfter("packageDebug")
+        doLast {
+            val dir = layout.buildDirectory.dir("outputs/apk/debug").get().asFile
+            if (dir.exists()) {
+                dir.listFiles { _, name ->
+                    name.endsWith(".apk") && !validDebugApkRegex.matches(name)
+                }?.forEach { it.delete() }
+            }
+        }
+    }
+    tasks.named("assembleDebug") {
+        finalizedBy(cleanDebugApks)
+    }
+    tasks.named("packageDebug") {
+        finalizedBy(cleanDebugApks)
     }
 }
 
