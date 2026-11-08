@@ -136,6 +136,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -169,6 +171,7 @@ import com.github.itube.highQualityThumbnail
 import com.github.itube.ui.components.WavySlider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 private fun lerpDp(start: Dp, stop: Dp, fraction: Float): Dp =
@@ -215,6 +218,30 @@ fun IosStyledPlayer(
     var showQualitySheet by remember { mutableStateOf(false) }
     var currentVideoTrackId by remember { mutableStateOf<String?>(null) }
     var loadedQualityHeight by remember { mutableIntStateOf(0) }
+
+    var activeTextureView by remember { mutableStateOf<TextureView?>(null) }
+    var videoAmbientFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // Live video ambient sampling: periodically samples a tiny 64x36 frame from the active TextureView
+    // and illuminates the entire display with dynamic, full-screen ambient glow in video mode (Zero black voids!).
+    LaunchedEffect(isVideoMode, isPlaying) {
+        if (!isVideoMode) {
+            videoAmbientFrame = null
+            return@LaunchedEffect
+        }
+        while (isActive && MusicPlayerState.isVideoMode) {
+            val tv = activeTextureView
+            if (tv != null && tv.isAvailable) {
+                try {
+                    val bmp = tv.getBitmap(64, 36)
+                    if (bmp != null) {
+                        videoAmbientFrame = bmp.asImageBitmap()
+                    }
+                } catch (_: Throwable) {}
+            }
+            delay(220L)
+        }
+    }
 
     // Companion Video Player (Owned by MusicPlayerState, retained when collapsed)
     val videoPlayer = remember(context) { MusicPlayerState.getOrCreateVideoPlayer(context) }
@@ -460,36 +487,48 @@ fun IosStyledPlayer(
         val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val fullBleedHeight = maxHeight * 0.56f
 
-        // ── 1. Ambient Blurred Artwork Layer (Deeply zoomed so top black margins never drop, with smooth breathing motion) ──
-        val blurTranslateY by animateDpAsState(
-            targetValue = if (isPanelOpen) 0.dp else 60.dp,
-            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-            label = "blurTranslateY"
-        )
+        // ── 1. Ambient Blurred Artwork / Video Layer (Full-screen ambient glow across entire display with zero black drop) ──
+        val isFullAmbient = isVideoMode || isPanelOpen
         val blurScale by animateFloatAsState(
-            targetValue = if (isPanelOpen) 1.38f else 1.35f,
+            targetValue = if (isFullAmbient) 1.45f else 1.35f,
             animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
             label = "blurScale"
         )
 
-        key(track.id) {
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(track.thumbnailUrl?.highQualityThumbnail())
-                    .crossfade(250)
-                    .build(),
+        val liveFrame = if (isVideoMode) videoAmbientFrame else null
+        if (liveFrame != null) {
+            Image(
+                bitmap = liveFrame,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .offset(y = blurTranslateY)
-                    .blur(50.dp)
+                    .blur(48.dp)
                     .graphicsLayer {
                         scaleX = blurScale
                         scaleY = blurScale
                         alpha = 0.95f
                     }
             )
+        } else {
+            key(track.id) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(track.thumbnailUrl?.highQualityThumbnail())
+                        .crossfade(250)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(50.dp)
+                        .graphicsLayer {
+                            scaleX = blurScale
+                            scaleY = blurScale
+                            alpha = 0.95f
+                        }
+                )
+            }
         }
 
         // ── 2. Luminous Scrim Gradient (Background Scrim Overlay - Rich Colors, never pitch black) ──
@@ -550,10 +589,12 @@ fun IosStyledPlayer(
                 AndroidView(
                     factory = { ctx ->
                         TextureView(ctx).apply {
+                            activeTextureView = this
                             videoPlayer.setVideoTextureView(this)
                         }
                     },
                     update = {
+                        activeTextureView = it
                         videoPlayer.setVideoTextureView(it)
                     },
                     modifier = Modifier
@@ -623,10 +664,12 @@ fun IosStyledPlayer(
                         AndroidView(
                             factory = { ctx ->
                                 TextureView(ctx).apply {
+                                    activeTextureView = this
                                     videoPlayer.setVideoTextureView(this)
                                 }
                             },
                             update = {
+                                activeTextureView = it
                                 videoPlayer.setVideoTextureView(it)
                             },
                             modifier = Modifier
